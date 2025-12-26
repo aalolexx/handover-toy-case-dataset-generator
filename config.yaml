@@ -1,0 +1,52 @@
+# Surgery Dataset Generator Configuration
+
+# Scene composition
+num_doctors: 1
+num_assistants: 4
+num_active_doctors: 1
+num_active_assistants: 2
+
+# Generation parameters
+total_num_frames: 1000
+seed: 22
+
+# Image settings
+img_size: 448
+
+# Movement settings
+movement_speed: 3.0
+max_transition_pause: 60
+
+# Colors (RGB format)
+doctor_color: [70, 130, 180]       # Steel blue
+assistant_color: [60, 179, 113]    # Medium sea green
+patient_table_color: [147, 112, 219]  # Medium purple
+preparation_table_color: [255, 182, 193]  # Light pink
+instrument_color: [169, 169, 169]  # Silver/dark gray
+scene_object_color: [128, 128, 128]  # Gray
+background_color: [240, 240, 240]  # Light gray
+
+# Scene objects
+num_scene_objects: 6
+num_instruments: 5
+
+# Person dimensions
+person_radius: 24
+
+# Table dimensions (relative to img_size)
+patient_table_width_ratio: 0.1
+patient_table_height_ratio: 0.15
+preparation_table_width_ratio: 0.1
+preparation_table_height_ratio: 0.05
+
+# Instrument dimensions
+instrument_size: 10
+
+# Action durations (in frames)
+prepare_duration_avg: 20
+work_duration_avg: 25
+hold_duration_avg: 8
+handover_duration: 5
+
+# Output settings
+output_dir: output
