@@ -18,13 +18,13 @@ movement_speed: 3.0
 max_transition_pause: 60
 
 # Colors (RGB format)
-doctor_color: [70, 130, 180]       # Steel blue
-assistant_color: [60, 179, 113]    # Medium sea green
-patient_table_color: [147, 112, 219]  # Medium purple
-preparation_table_color: [255, 182, 193]  # Light pink
-instrument_color: [169, 169, 169]  # Silver/dark gray
-scene_object_color: [128, 128, 128]  # Gray
-background_color: [240, 240, 240]  # Light gray
+doctor_color: [124, 59, 255] # Steel blue
+assistant_color: [59, 255, 115] # Medium sea green
+patient_table_color: [91, 91, 99] # Medium purple
+preparation_table_color: [255, 59, 222]  # Light pink
+instrument_color: [134, 134, 145] # Silver/dark gray
+scene_object_color: [169, 169, 184] # Gray
+background_color: [255, 255, 255] 
 
 # Scene objects
 num_scene_objects: 6

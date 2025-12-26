@@ -80,7 +80,7 @@ class RenderManager:
         """Draw a rectangular scene object."""
         x, y, w, h = obj.rect
         draw.rectangle([x, y, x + w, y + h], fill=obj.color, 
-                       outline=(50, 50, 50), width=1)
+                       outline=darken(obj.color), width=2)
     
     def _draw_person(self, draw: ImageDraw.ImageDraw, person: Person):
         """Draw a person (circle) with their held instrument if any."""
@@ -89,7 +89,7 @@ class RenderManager:
         
         # Draw circle
         draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                     fill=person.color, outline=(30, 30, 30), width=2)
+                     fill=person.color, outline=darken(person.color), width=2)
         
         # Draw held instrument
         if person.held_instrument:
@@ -101,8 +101,13 @@ class RenderManager:
         # Convert to format expected by PIL
         flat_points = [(int(p[0]), int(p[1])) for p in points]
         draw.polygon(flat_points, fill=self.config.instrument_color,
-                     outline=(50, 50, 50))
+                     outline=darken(self.config.instrument_color), width=2)
     
     def save_frame(self, img: Image.Image, path: str, quality: int = 95):
         """Save a frame to disk as JPEG."""
         img.save(path, 'JPEG', quality=quality)
+
+def darken(color, factor=0.8):
+    r, g, b = color
+    return (int(r * factor), int(g * factor), int(b * factor))
+
