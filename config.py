@@ -18,7 +18,8 @@ class Config:
     num_active_assistants: int = 2
     
     # Generation parameters
-    total_num_frames: int = 500
+    total_num_frames: int = 1000
+    num_seperated_videos: int = 4 
     handover_rate: float = 0.02  # ~every 50 frames
     seed: int = 42
     

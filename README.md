@@ -70,12 +70,19 @@ python dataset_generator.py --create-config
 | num_assistants | 3 | Total assistants in scene |
 | num_active_doctors | 1 | Doctors participating in handovers |
 | num_active_assistants | 2 | Assistants participating in handovers |
-| total_num_frames | 500 | Total frames to generate |
+| total_num_frames | 1000 | Total frames to generate |
+| num_seperated_videos | 4 | Seperate Sequences with new scene setup |
 | handover_rate | 0.02 | Probability of handover initiation |
 | img_size | 448 | Image dimensions (square) |
 | movement_speed | 3.0 | Person movement speed per frame |
 | max_transition_pause | 100 | Max pause between state transitions |
 | seed | 42 | Random seed for reproducibility |
+|occlusion_obj_appearance_prob | 0.01 | |
+|occlusion_obj_max_num | 3 | |
+|occlusion_obj_max_size | 0.5 | As a fraction of img_size|
+
+instrument_hidden_prob: 0.01
+
 
 See `config.yaml` for all available options.
 

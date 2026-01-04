@@ -8,7 +8,8 @@ num_active_assistants: 2
 
 # Generation parameters
 total_num_frames: 1000
-seed: 22
+num_seperated_videos: 4 
+seed: -1
 
 # Image settings
 img_size: 448

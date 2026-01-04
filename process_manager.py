@@ -24,7 +24,10 @@ class ProcessManager:
             config: Scene configuration
         """
         self.config = config
-        self.rng = np.random.default_rng(config.seed)
+        if config.seed != -1:
+            self.rng = np.random.default_rng(config.seed)
+        else:
+            self.rng = np.random.default_rng()
         
         # Scene elements
         self.patient_table: Optional[PatientTable] = None

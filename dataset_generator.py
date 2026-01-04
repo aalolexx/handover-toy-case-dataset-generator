@@ -53,10 +53,11 @@ class DatasetGenerator:
         Args:
             progress: Whether to show progress bar
         """
-        print(f"Initializing scene with seed {self.config.seed}...")
+        if self.config.seed != -1:
+            print(f"Initializing scene with seed {self.config.seed}...")
         self.process_manager.initialize_scene()
         
-        print(f"Generating {self.config.total_num_frames} frames...")
+        print(f"Generating {self.config.total_num_frames} frames and {self.config.num_seperated_videos} videos/sequences...")
         
         # Determine train/val split
         train_frames = int(self.config.total_num_frames * 0.8)
@@ -66,6 +67,11 @@ class DatasetGenerator:
             iterator = tqdm(iterator, desc="Generating frames")
         
         for frame_num in iterator:
+
+            if frame_num % (self.config.total_num_frames // self.config.num_seperated_videos) == 0:
+                self.process_manager = ProcessManager(self.config)
+                self.process_manager.initialize_scene()
+            
             # Update scene
             self.process_manager.update()
             
