@@ -8,7 +8,7 @@ import math
 from config import Config
 from person import Person
 from instrument import Instrument
-from scene_object import SceneObject, PatientTable, PreparationTable, RandomMedicalObject
+from scene_object import SceneObject, PatientTable, PreparationTable, RandomMedicalObject, OcclusionObject
 from enums import InstrumentState
 
 
@@ -29,7 +29,8 @@ class RenderManager:
                      instruments: List[Instrument],
                      patient_table: PatientTable,
                      preparation_table: PreparationTable,
-                     scene_objects: List[RandomMedicalObject]) -> Image.Image:
+                     scene_objects: List[RandomMedicalObject],
+                     occlusion_objects: List[OcclusionObject]) -> Image.Image:
         """
         Render a single frame of the scene.
         
@@ -53,26 +54,31 @@ class RenderManager:
         # 2. Tables
         # 3. Instruments on tables
         # 4. People with their held instruments
+        # 5. Occlusion objects
         
-        # 1. Render scene objects
+        # Render scene objects
         for obj in scene_objects:
             self._draw_rect(draw, obj)
         
-        # 2. Render tables
+        # Render tables
         self._draw_rect(draw, patient_table)
         self._draw_rect(draw, preparation_table)
         
-        # 3. Render instruments on tables
+        # Render instruments on tables
         for instrument in instruments:
             if instrument.state == InstrumentState.ON_TABLE:
                 self._draw_instrument(draw, instrument)
         
-        # 4. Render people sorted by Y position (for overlapping)
+        # Render people sorted by Y position (for overlapping)
         # People with higher Y are rendered later (appear on top)
         sorted_persons = sorted(persons, key=lambda p: p.position[1])
         
         for person in sorted_persons:
             self._draw_person(draw, person)
+
+        # Render occlusion objects
+        for obj in occlusion_objects:
+            self._draw_rect(draw, obj)
         
         return img
     
@@ -97,6 +103,9 @@ class RenderManager:
     
     def _draw_instrument(self, draw: ImageDraw.ImageDraw, instrument: Instrument):
         """Draw an instrument (triangle)."""
+        if instrument.opacity == 0:
+            return
+        
         points = instrument.get_triangle_points()
         # Convert to format expected by PIL
         flat_points = [(int(p[0]), int(p[1])) for p in points]
@@ -106,6 +115,7 @@ class RenderManager:
     def save_frame(self, img: Image.Image, path: str, quality: int = 95):
         """Save a frame to disk as JPEG."""
         img.save(path, 'JPEG', quality=quality)
+
 
 def darken(color, factor=0.8):
     r, g, b = color

@@ -36,6 +36,7 @@ class Config:
     preparation_table_color: Tuple[int, int, int] = (255, 182, 193)  # Light pink
     instrument_color: Tuple[int, int, int] = (169, 169, 169)  # Dark gray / silver
     scene_object_color: Tuple[int, int, int] = (128, 128, 128)  # Gray
+    occlusion_object_color: Tuple[int, int, int] = (0, 0, 0)  # black
     background_color: Tuple[int, int, int] = (240, 240, 240)  # Light gray
     
     # Scene objects
@@ -59,6 +60,12 @@ class Config:
     work_duration_avg: int = 25
     hold_duration_avg: int = 8
     handover_duration: int = 5
+
+    occlusion_obj_appearance_prob: float = 0.01
+    occlusion_obj_max_num: int = 3
+    occlusion_obj_max_size: float = 0.5 # As a fraction of img_size
+
+    instrument_hidden_prob: float = 0.01
     
     # Output settings
     output_dir: str = "output"

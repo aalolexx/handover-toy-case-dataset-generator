@@ -30,6 +30,7 @@ class Instrument:
         self.holder: Optional['Person'] = None
         self.rotation_angle: float = 0.0  # For spinning during doctor_works
         self.spin_speed: float = 0.3  # Radians per frame when spinning
+        self.opacity = 1.0
         
     def update(self):
         """Update instrument state each frame."""

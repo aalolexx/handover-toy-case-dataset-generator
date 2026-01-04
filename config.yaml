@@ -48,5 +48,12 @@ work_duration_avg: 25
 hold_duration_avg: 8
 handover_duration: 5
 
+# Occlusions
+occlusion_obj_appearance_prob: 0.01
+occlusion_obj_max_num: 3
+occlusion_obj_max_size: 0.5 # As a fraction of img_size
+
+instrument_hidden_prob: 0.01
+
 # Output settings
 output_dir: output

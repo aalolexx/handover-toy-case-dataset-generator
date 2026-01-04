@@ -78,7 +78,8 @@ class DatasetGenerator:
                 state['instruments'],
                 state['patient_table'],
                 state['preparation_table'],
-                state['scene_objects']
+                state['scene_objects'],
+                state['occlusion_objects']
             )
             
             # Generate annotations

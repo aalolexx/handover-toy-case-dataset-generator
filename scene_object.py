@@ -85,3 +85,12 @@ class RandomMedicalObject(SceneObject):
                  color: Tuple[int, int, int], obj_id: int):
         super().__init__(x, y, width, height, color, f"medical_object_{obj_id}")
         self.obj_id = obj_id
+
+
+class OcclusionObject(SceneObject):
+    """Rectangle occluding the scene simulating camera errors or general occlusions."""
+
+    def __init__(self, x: int, y: int, width: int, height: int,
+                 color: Tuple[int, int, int], obj_id: int):
+        super().__init__(x, y, width, height, color, f"occlusions_object_{obj_id}")
+        self.obj_id = obj_id

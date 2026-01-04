@@ -7,7 +7,7 @@ import numpy as np
 from config import Config
 from person import Person
 from instrument import Instrument
-from scene_object import PatientTable, PreparationTable, RandomMedicalObject
+from scene_object import PatientTable, PreparationTable, RandomMedicalObject, OcclusionObject
 from enums import PersonType, AssistantState, DoctorState
 from utils import random_point_outside_rects, distance
 from pathfinding_utils import PathfindingManager
@@ -32,6 +32,7 @@ class ProcessManager:
         self.scene_objects: List[RandomMedicalObject] = []
         self.persons: List[Person] = []
         self.instruments: List[Instrument] = []
+        self.occlusion_objects: List[OcclusionObject] = []
         
         # Track active persons
         self.active_doctors: List[Person] = []
@@ -229,6 +230,29 @@ class ProcessManager:
         # Dynamic active status changes (occasionally)
         if self.rng.random() < 0.001:  # Very rare
             self._maybe_swap_active_status()
+
+        # Randomly add occlusion objects
+        self.occlusion_objects = []
+        for _ in range(self.config.occlusion_obj_max_num):
+            if self.rng.random() < self.config.occlusion_obj_appearance_prob:
+                max_size = int(self.config.img_size * self.config.occlusion_obj_max_size)
+                width = self.rng.integers(20, max_size)
+                height = self.rng.integers(20, max_size)
+                x = self.rng.integers(0, self.config.img_size - width)
+                y = self.rng.integers(0, self.config.img_size - height)
+                occlusion_obj = OcclusionObject(
+                    x, y, width, height,
+                    self.config.occlusion_object_color,
+                    len(self.occlusion_objects)
+                )
+                self.occlusion_objects.append(occlusion_obj)
+
+        # Randomly hide instruments (occlusion)
+        for instrument in self.instruments:
+            instrument.opacity = 1.0  # Default visible
+            if instrument.holder is not None:
+                if self.rng.random() < self.config.instrument_hidden_prob:
+                    instrument.opacity = 0.0
         
         self.current_frame += 1
     
@@ -282,5 +306,6 @@ class ProcessManager:
             'instruments': self.instruments,
             'patient_table': self.patient_table,
             'preparation_table': self.preparation_table,
-            'scene_objects': self.scene_objects
+            'scene_objects': self.scene_objects,
+            'occlusion_objects': self.occlusion_objects
         }
