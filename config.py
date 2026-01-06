@@ -39,6 +39,7 @@ class Config:
     scene_object_color: Tuple[int, int, int] = (128, 128, 128)  # Gray
     occlusion_object_color: Tuple[int, int, int] = (0, 0, 0)  # black
     background_color: Tuple[int, int, int] = (240, 240, 240)  # Light gray
+    handover_highlight_color: Tuple[int, int, int] = (255, 0, 0)  # Red
     
     # Scene objects
     num_scene_objects: int = 8
@@ -62,6 +63,8 @@ class Config:
     hold_duration_avg: int = 8
     handover_duration: int = 5
 
+    visualize_handover: bool = False
+
     occlusion_obj_appearance_prob: float = 0.01
     occlusion_obj_max_num: int = 3
     occlusion_obj_max_size: float = 0.5 # As a fraction of img_size
@@ -80,7 +83,7 @@ class Config:
         # Convert color lists to tuples
         for key in ['doctor_color', 'assistant_color', 'patient_table_color', 
                     'preparation_table_color', 'instrument_color', 'scene_object_color',
-                    'background_color']:
+                    'background_color', 'handover_highlight_color']:
             if key in data and isinstance(data[key], list):
                 data[key] = tuple(data[key])
         

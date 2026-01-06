@@ -100,6 +100,13 @@ class RenderManager:
         # Draw held instrument
         if person.held_instrument:
             self._draw_instrument(draw, person.held_instrument)
+
+        # If handover active, highlight person
+        if self.config.visualize_handover and person.is_in_handover():
+            highlight_r = r + 5
+            draw.ellipse([cx - highlight_r, cy - highlight_r, 
+                          cx + highlight_r, cy + highlight_r],
+                         outline=self.config.handover_highlight_color, width=3)
     
     def _draw_instrument(self, draw: ImageDraw.ImageDraw, instrument: Instrument):
         """Draw an instrument (triangle)."""

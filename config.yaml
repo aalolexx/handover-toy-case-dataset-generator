@@ -8,7 +8,7 @@ num_active_assistants: 2
 
 # Generation parameters
 total_num_frames: 1000
-num_seperated_videos: 4 
+num_seperated_videos: 1
 seed: -1
 
 # Image settings
@@ -19,13 +19,14 @@ movement_speed: 3.0
 max_transition_pause: 60
 
 # Colors (RGB format)
-doctor_color: [124, 59, 255] # Steel blue
-assistant_color: [59, 255, 115] # Medium sea green
-patient_table_color: [91, 91, 99] # Medium purple
-preparation_table_color: [255, 59, 222]  # Light pink
-instrument_color: [134, 134, 145] # Silver/dark gray
-scene_object_color: [169, 169, 184] # Gray
+doctor_color: [124, 59, 255]
+assistant_color: [59, 255, 115]
+patient_table_color: [91, 91, 99]
+preparation_table_color: [255, 59, 222]
+instrument_color: [134, 134, 145]
+scene_object_color: [169, 169, 184]
 background_color: [255, 255, 255] 
+handover_highlight_color: [255, 59, 101]
 
 # Scene objects
 num_scene_objects: 6
@@ -48,6 +49,8 @@ prepare_duration_avg: 20
 work_duration_avg: 25
 hold_duration_avg: 8
 handover_duration: 5
+
+visualize_handover: true
 
 # Occlusions
 occlusion_obj_appearance_prob: 0.01

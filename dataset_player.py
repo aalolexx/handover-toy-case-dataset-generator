@@ -222,7 +222,7 @@ class DatasetPlayer:
         print("  Q/ESC: Quit")
         print()
         
-        cv2.namedWindow('Dataset Player', cv2.WINDOW_NORMAL)
+        cv2.namedWindow('Dataset Player', cv2.WINDOW_AUTOSIZE)
         
         while True:
             # Load and process frame

@@ -2,6 +2,13 @@
 
 A synthetic dataset generator for training YOLO-style action detection models on medical instrument handover scenarios.
 
+<table>
+  <tr>
+    <td><img src="public/preview-vid.gif" width="448"></td>
+    <td><img src="public/preview-vid-annotations.gif" width="448"></td>
+  </tr>
+</table>
+
 ## Overview
 
 This tool generates image sequences simulating a surgery room from a top-down perspective, where doctors and assistants perform instrument handovers. Each frame is annotated in YOLO format with bounding boxes for various actions.
@@ -77,6 +84,7 @@ python dataset_generator.py --create-config
 | movement_speed | 3.0 | Person movement speed per frame |
 | max_transition_pause | 100 | Max pause between state transitions |
 | seed | 42 | Random seed for reproducibility |
+|visualize_handover | true | highlights persons involved in handover |
 |occlusion_obj_appearance_prob | 0.01 | |
 |occlusion_obj_max_num | 3 | |
 |occlusion_obj_max_size | 0.5 | As a fraction of img_size|
