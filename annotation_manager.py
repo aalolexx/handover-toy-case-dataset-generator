@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 import os
 
 from person import Person
-from enums import ActionLabel, LABEL_NAMES
+from enums import ActionLabel, LABEL_NAMES, PersonType
 from utils import get_combined_bounding_box, normalize_bbox
 
 
@@ -43,6 +43,21 @@ class AnnotationManager:
         processed_handover_pairs = set()
         
         for person in persons:
+            # Always annotate the generic person box
+            person_bbox = person.get_bounding_box(self.img_size)
+            person_line = self._format_annotation(ActionLabel.PERSON.value, person_bbox)
+            annotations.append(person_line)
+
+            if person.person_type == PersonType.DOCTOR:
+                doctor_line = self._format_annotation(ActionLabel.DOCTOR.value, person_bbox)
+                annotations.append(doctor_line)
+            elif person.person_type == PersonType.ASSISTANT:
+                assistant_line = self._format_annotation(ActionLabel.ASSISTANT.value, person_bbox)
+                annotations.append(assistant_line)
+            else:
+                print("what the helly?")
+
+            # Action specific annotations
             action = person.get_current_action()
             if action is None:
                 continue

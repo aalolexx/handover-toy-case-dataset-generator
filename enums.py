@@ -48,14 +48,20 @@ class ActionLabel(Enum):
     ASSISTANT_GIVES = 3
     ASSISTANT_RECEIVES = 4
     HANDOVER = 5  # Additional label for any handover
+    PERSON = 6  # Generic actor label
+    DOCTOR = 7
+    ASSISTANT = 8
 
 
 # Mapping from label to string name (for YOLO classes.txt)
 LABEL_NAMES = {
-    ActionLabel.ASSISTANT_PREPARES: "assistant_prepares",
-    ActionLabel.DOCTOR_WORKS: "doctor_works",
-    ActionLabel.PERSON_HOLDS: "person_holds",
-    ActionLabel.ASSISTANT_GIVES: "assistant_gives",
-    ActionLabel.ASSISTANT_RECEIVES: "assistant_receives",
+    ActionLabel.ASSISTANT_PREPARES: "green_prepares",
+    ActionLabel.DOCTOR_WORKS: "blue_works",
+    ActionLabel.PERSON_HOLDS: "actor_holds",
+    ActionLabel.ASSISTANT_GIVES: "green_gives",
+    ActionLabel.ASSISTANT_RECEIVES: "green_receives",
     ActionLabel.HANDOVER: "handover",
+    ActionLabel.PERSON: "actor",
+    ActionLabel.DOCTOR: "blue",
+    ActionLabel.ASSISTANT: "green",
 }

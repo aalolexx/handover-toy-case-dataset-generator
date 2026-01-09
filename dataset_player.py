@@ -21,12 +21,15 @@ from enums import ActionLabel, LABEL_NAMES
 
 # Colors for each action class (BGR for OpenCV, RGB for PIL)
 CLASS_COLORS = {
-    ActionLabel.ASSISTANT_PREPARES.value: (255, 165, 0),    # Orange
-    ActionLabel.DOCTOR_WORKS.value: (255, 0, 0),            # Red
-    ActionLabel.PERSON_HOLDS.value: (0, 255, 0),            # Green
-    ActionLabel.ASSISTANT_GIVES.value: (0, 255, 255),       # Cyan
-    ActionLabel.ASSISTANT_RECEIVES.value: (255, 0, 255),    # Magenta
-    ActionLabel.HANDOVER.value: (255, 255, 0),              # Yellow
+    ActionLabel.ASSISTANT_PREPARES.value: (255, 165, 0),
+    ActionLabel.DOCTOR_WORKS.value: (255, 0, 0),
+    ActionLabel.PERSON_HOLDS.value: (0, 255, 0),
+    ActionLabel.ASSISTANT_GIVES.value: (0, 255, 255),
+    ActionLabel.ASSISTANT_RECEIVES.value: (255, 0, 255),
+    ActionLabel.HANDOVER.value: (255, 255, 0),
+    ActionLabel.PERSON.value: (255, 255, 0),
+    ActionLabel.DOCTOR.value: (124, 59, 255),
+    ActionLabel.ASSISTANT.value: (59, 255, 115),
 }
 
 
@@ -118,12 +121,14 @@ class DatasetPlayer:
         except:
             font = ImageFont.load_default()
         
+        y_label_reserved = []
+
         for class_id, x_center, y_center, width, height in annotations:
             # Convert normalized coordinates to pixel coordinates
             x1 = int((x_center - width / 2) * img_width)
             y1 = int((y_center - height / 2) * img_height)
             x2 = int((x_center + width / 2) * img_width)
-            y2 = int((y_center + height / 2) * img_height)
+            y2 = int((y_center + height / 2) * img_height)             
             
             # Get color for this class
             color = CLASS_COLORS.get(class_id, (255, 255, 255))
@@ -133,6 +138,11 @@ class DatasetPlayer:
             
             # Draw label
             if show_labels:
+                while y1 in y_label_reserved:
+                    y1 -= 15
+
+                y_label_reserved.append(y1)   
+
                 label = self.class_names.get(class_id, f"class_{class_id}")
                 
                 # Draw label background
@@ -149,22 +159,29 @@ class DatasetPlayer:
         """Draw bounding boxes on image using OpenCV."""
         img_height, img_width = image.shape[:2]
         
+        y_label_reserved = []
+
         for class_id, x_center, y_center, width, height in annotations:
             # Convert normalized coordinates to pixel coordinates
             x1 = int((x_center - width / 2) * img_width)
             y1 = int((y_center - height / 2) * img_height)
             x2 = int((x_center + width / 2) * img_width)
-            y2 = int((y_center + height / 2) * img_height)
-            
+            y2 = int((y_center + height / 2) * img_height) 
+
             # Get color for this class (BGR for OpenCV)
             color_rgb = CLASS_COLORS.get(class_id, (255, 255, 255))
             color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
             
             # Draw rectangle
             cv2.rectangle(image, (x1, y1), (x2, y2), color_bgr, 2)
-            
+
             # Draw label
             if show_labels:
+                while y1 in y_label_reserved:
+                    y1 -= text_height + 5
+
+                y_label_reserved.append(y1)    
+
                 label = self.class_names.get(class_id, f"class_{class_id}")
                 
                 # Get text size

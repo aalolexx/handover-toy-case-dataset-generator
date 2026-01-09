@@ -48,13 +48,7 @@ class RenderManager:
         img = Image.new('RGB', (self.img_size, self.img_size), 
                         self.config.background_color)
         draw = ImageDraw.Draw(img)
-        
-        # Render order (back to front):
-        # 1. Scene objects (random medical equipment at edges)
-        # 2. Tables
-        # 3. Instruments on tables
-        # 4. People with their held instruments
-        # 5. Occlusion objects
+
         
         # Render scene objects
         for obj in scene_objects:

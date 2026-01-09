@@ -79,7 +79,6 @@ python dataset_generator.py --create-config
 | num_active_assistants | 2 | Assistants participating in handovers |
 | total_num_frames | 1000 | Total frames to generate |
 | num_seperated_videos | 4 | Seperate Sequences with new scene setup |
-| handover_rate | 0.02 | Probability of handover initiation |
 | img_size | 448 | Image dimensions (square) |
 | movement_speed | 3.0 | Person movement speed per frame |
 | max_transition_pause | 100 | Max pause between state transitions |

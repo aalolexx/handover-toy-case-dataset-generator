@@ -65,12 +65,15 @@ class DatasetGenerator:
         iterator = range(self.config.total_num_frames)
         if progress:
             iterator = tqdm(iterator, desc="Generating frames")
+
+        video_idx = 0
         
         for frame_num in iterator:
 
             if frame_num % (self.config.total_num_frames // self.config.num_seperated_videos) == 0:
                 self.process_manager = ProcessManager(self.config)
                 self.process_manager.initialize_scene()
+                video_idx += 1
             
             # Update scene
             self.process_manager.update()
@@ -96,12 +99,12 @@ class DatasetGenerator:
             split = 'train' if frame_num < train_frames else 'val'
             
             # Save frame
-            img_filename = f"frame_{frame_num:06d}.jpg"
+            img_filename = f"video{video_idx:02}_frame_{frame_num:06d}.jpg"
             img_path = os.path.join(self.output_dir, 'images', split, img_filename)
             self.render_manager.save_frame(img, img_path)
             
             # Save annotations
-            label_filename = f"frame_{frame_num:06d}.txt"
+            label_filename = f"video{video_idx:02}_frame_{frame_num:06d}.txt"
             label_path = os.path.join(self.output_dir, 'labels', split, label_filename)
             with open(label_path, 'w') as f:
                 f.write('\n'.join(annotations))

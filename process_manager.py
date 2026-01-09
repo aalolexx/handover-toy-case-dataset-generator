@@ -12,7 +12,6 @@ from enums import PersonType, AssistantState, DoctorState
 from utils import random_point_outside_rects, distance
 from pathfinding_utils import PathfindingManager
 
-
 class ProcessManager:
     """Manages the scene setup and state transitions."""
     
@@ -236,13 +235,24 @@ class ProcessManager:
 
         # Randomly add occlusion objects
         self.occlusion_objects = []
+        occluded_persons = []
+
         for _ in range(self.config.occlusion_obj_max_num):
             if self.rng.random() < self.config.occlusion_obj_appearance_prob:
                 max_size = int(self.config.img_size * self.config.occlusion_obj_max_size)
                 width = self.rng.integers(20, max_size)
                 height = self.rng.integers(20, max_size)
-                x = self.rng.integers(0, self.config.img_size - width)
-                y = self.rng.integers(0, self.config.img_size - height)
+
+                person_to_occlude = self.rng.choice(self.persons)
+                # if person already occluded, pick another
+                while person_to_occlude in occluded_persons and len(occluded_persons) < len(self.persons):
+                    person_to_occlude = self.rng.choice(self.persons)
+
+                occluded_persons.append(person_to_occlude)
+                person_pos = person_to_occlude.position
+                x = person_pos[0] - width // 2
+                y = person_pos[1] - height // 2
+
                 occlusion_obj = OcclusionObject(
                     x, y, width, height,
                     self.config.occlusion_object_color,

@@ -20,7 +20,6 @@ class Config:
     # Generation parameters
     total_num_frames: int = 1000
     num_seperated_videos: int = 4 
-    handover_rate: float = 0.02  # ~every 50 frames
     seed: int = 42
     
     # Image settings
@@ -28,18 +27,18 @@ class Config:
     
     # Movement settings
     movement_speed: float = 3.0
-    max_transition_pause: int = 100
+    max_transition_pause: int = 60
     
     # Colors (RGB tuples)
-    doctor_color: Tuple[int, int, int] = (70, 130, 180)  # Steel blue
-    assistant_color: Tuple[int, int, int] = (60, 179, 113)  # Medium sea green
-    patient_table_color: Tuple[int, int, int] = (147, 112, 219)  # Medium purple
-    preparation_table_color: Tuple[int, int, int] = (255, 182, 193)  # Light pink
-    instrument_color: Tuple[int, int, int] = (169, 169, 169)  # Dark gray / silver
-    scene_object_color: Tuple[int, int, int] = (128, 128, 128)  # Gray
-    occlusion_object_color: Tuple[int, int, int] = (0, 0, 0)  # black
-    background_color: Tuple[int, int, int] = (240, 240, 240)  # Light gray
-    handover_highlight_color: Tuple[int, int, int] = (255, 0, 0)  # Red
+    doctor_color: Tuple[int, int, int] = (59, 167, 255)
+    assistant_color: Tuple[int, int, int] = (59, 255, 115)
+    patient_table_color: Tuple[int, int, int] = (91, 91, 99)
+    preparation_table_color: Tuple[int, int, int] = (255, 59, 222)
+    instrument_color: Tuple[int, int, int] = (134, 134, 145)
+    scene_object_color: Tuple[int, int, int] = (169, 169, 184)
+    occlusion_object_color: Tuple[int, int, int] = (0, 0, 0) 
+    background_color: Tuple[int, int, int] = (255, 255, 255)
+    handover_highlight_color: Tuple[int, int, int] = (255, 59, 101)
     
     # Scene objects
     num_scene_objects: int = 8
@@ -55,7 +54,7 @@ class Config:
     preparation_table_height_ratio: float = 0.1
     
     # Instrument dimensions
-    instrument_size: int = 12
+    instrument_size: int = 10
     
     # Action durations (in frames)
     prepare_duration_avg: int = 20
@@ -107,7 +106,7 @@ class Config:
         width = int(self.img_size * self.patient_table_width_ratio)
         height = int(self.img_size * self.patient_table_height_ratio)
         x = (self.img_size - width) // 2
-        y = (self.img_size - height) // 2
+        y = (self.img_size - height) // 2 - height*2
         return (x, y, width, height)
     
     @property
@@ -117,7 +116,7 @@ class Config:
         width = int(self.img_size * self.preparation_table_width_ratio)
         height = int(self.img_size * self.preparation_table_height_ratio)
         x = (self.img_size - width) // 2
-        y = patient_rect[1] + patient_rect[3]  # Below patient table
+        y = (self.img_size - height) // 2 + height*2
         return (x, y, width, height)
 
 
