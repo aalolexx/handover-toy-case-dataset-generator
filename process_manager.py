@@ -9,11 +9,14 @@ from person import Person
 from instrument import Instrument
 from scene_object import PatientTable, PreparationTable, RandomMedicalObject, OcclusionObject
 from enums import PersonType, AssistantState, DoctorState
-from utils import random_point_outside_rects, distance
+from utils import random_point_outside_rects, distance, random_pos_near_center
 from pathfinding_utils import PathfindingManager
 
 class ProcessManager:
     """Manages the scene setup and state transitions."""
+    
+    # Available edges for table placement
+    EDGES = ['top', 'bottom', 'left', 'right']
     
     def __init__(self, config: Config):
         """
@@ -36,6 +39,10 @@ class ProcessManager:
         self.instruments: List[Instrument] = []
         self.occlusion_objects: List[OcclusionObject] = []
         
+        # Track which edges are used by tables
+        self.patient_table_edge: Optional[str] = None
+        self.preparation_table_edge: Optional[str] = None
+        
         # Track active persons
         self.active_doctors: List[Person] = []
         self.active_assistants: List[Person] = []
@@ -54,39 +61,79 @@ class ProcessManager:
         self._create_instruments()
         self._create_persons()
         self._assign_active_status()
+        self._set_person_references()
         self._position_persons_initially()
     
     def _create_tables(self):
-        """Create the patient and preparation tables."""
+        """Create the patient and preparation tables on different edges."""
+        # Randomly select edge for patient table
+        available_edges = self.EDGES.copy()
+        self.patient_table_edge = self.rng.choice(available_edges)
+        available_edges.remove(self.patient_table_edge)
+        
+        # Randomly select different edge for preparation table
+        self.preparation_table_edge = self.rng.choice(available_edges)
+        
+        # Create patient table
         pt_rect = self.config.patient_table_rect
         self.patient_table = PatientTable(
             pt_rect[0], pt_rect[1], pt_rect[2], pt_rect[3],
             self.config.patient_table_color
         )
+        # Position on its assigned edge
+        patient_pos = self.patient_table.position_on_edge(
+            self.patient_table_edge, 
+            self.config.img_size,
+        )
+        self.patient_table.position = patient_pos
         
+        # Create preparation table
         prep_rect = self.config.preparation_table_rect
         self.preparation_table = PreparationTable(
             prep_rect[0], prep_rect[1], prep_rect[2], prep_rect[3],
             self.config.preparation_table_color
         )
+        # Position on its assigned edge
+        prep_pos = self.preparation_table.position_on_edge(
+            self.preparation_table_edge,
+            self.config.img_size,
+        )
+        self.preparation_table.position = prep_pos
+        
+        # Re-initialize instrument positions after positioning the table
+        self.preparation_table._init_instrument_positions()
     
     def _create_scene_objects(self):
-        """Create random medical objects at scene edges."""
+        """Create random medical objects at scene edges (avoiding table edges)."""
         edge_margin = 5
         
-        # Define edge zones (avoiding center where tables are)
-        zones = [
-            # Top edge
-            (edge_margin, edge_margin, 
-             self.config.img_size - 2 * edge_margin, 40),
-            # Bottom edge (below prep table)
-            (edge_margin, self.config.img_size - 40,
-             self.config.img_size - 2 * edge_margin, 20),
-            # Left edge
-            (edge_margin, 80, 40, self.config.img_size - 100),
-            # Right edge
-            (self.config.img_size - 60, 80, 40, self.config.img_size - 100),
-        ]
+        # Determine which edges are free (not used by tables)
+        used_edges = {self.patient_table_edge, self.preparation_table_edge}
+        free_edges = [e for e in self.EDGES if e not in used_edges]
+        
+        # Define edge zones based on free edges
+        zones = []
+        for edge in free_edges:
+            if edge == 'top':
+                zones.append((edge_margin, edge_margin, 
+                             self.config.img_size - 2 * edge_margin, 40))
+            elif edge == 'bottom':
+                zones.append((edge_margin, self.config.img_size - 40,
+                             self.config.img_size - 2 * edge_margin, 20))
+            elif edge == 'left':
+                zones.append((edge_margin, 80, 40, self.config.img_size - 100))
+            elif edge == 'right':
+                zones.append((self.config.img_size - 60, 80, 40, self.config.img_size - 100))
+        
+        # If no free edges, use corners or minimal zones
+        if not zones:
+            # Fallback: place objects in corners
+            zones = [
+                (edge_margin, edge_margin, 30, 30),  # Top-left corner
+                (self.config.img_size - 40, edge_margin, 30, 30),  # Top-right corner
+                (edge_margin, self.config.img_size - 40, 30, 30),  # Bottom-left corner
+                (self.config.img_size - 40, self.config.img_size - 40, 30, 30),  # Bottom-right corner
+            ]
         
         for i in range(self.config.num_scene_objects):
             # Pick a random zone
@@ -156,6 +203,11 @@ class ProcessManager:
                             self.scene_objects, self.pathfinding)
             self.persons.append(person)
             person_id += 1
+
+    def _set_person_references(self):
+        """Give each person a reference to all other persons for collision avoidance."""
+        for person in self.persons:
+            person.set_all_persons(self.persons)
     
     def _assign_active_status(self):
         """Assign is_active status to doctors and assistants."""
@@ -190,22 +242,24 @@ class ProcessManager:
         bounds = (0, 0, self.config.img_size, self.config.img_size)
         
         for person in self.persons:
+            person_pos = random_pos_near_center(bounds, self.rng)
             if person.is_active:
                 if person.person_type == PersonType.DOCTOR:
                     # Position active doctors near patient table
                     person._set_target_near_patient_table()
-                    person.position = person.target_position
+                    person.position = person_pos
                 else:
                     # Position active assistants near preparation table
                     person._set_target_near_prep_table()
-                    person.position = person.target_position
+                    person.position = person_pos
             else:
                 # Position inactive persons randomly
-                pos = random_point_outside_rects(
+                random_pos = random_point_outside_rects(
                     obstacles, bounds, person.radius, self.rng)
-                if pos:
-                    person.position = pos
-                    person.original_position = pos
+                
+                if random_pos:
+                    person.position = random_pos
+                    person.original_position = random_pos
                 else:
                     # Fallback position
                     person.position = (self.config.img_size * 0.2,
@@ -320,5 +374,7 @@ class ProcessManager:
             'patient_table': self.patient_table,
             'preparation_table': self.preparation_table,
             'scene_objects': self.scene_objects,
-            'occlusion_objects': self.occlusion_objects
+            'occlusion_objects': self.occlusion_objects,
+            'patient_table_edge': self.patient_table_edge,
+            'preparation_table_edge': self.preparation_table_edge
         }

@@ -91,7 +91,14 @@ class AnnotationManager:
                 # Add the action annotation
                 line = self._format_annotation(action.value, bbox)
                 annotations.append(line)
-        
+
+            # add holds box also to working doctor and handover
+            if action == ActionLabel.DOCTOR_WORKS or person.is_in_handover():
+                if person.held_instrument is not None:
+                    bbox = person.get_bounding_box(self.img_size)
+                    line = self._format_annotation(ActionLabel.PERSON_HOLDS.value, bbox)
+                    annotations.append(line)
+
         return annotations
     
     def _format_annotation(self, class_id: int,

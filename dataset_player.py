@@ -366,7 +366,7 @@ class DatasetPlayer:
     
     def export_video(self, output_path: str, fps: int = 30, 
                      show_boxes: bool = True, show_labels: bool = True,
-                     codec: str = 'mp4v'):
+                     codec: str = 'mp4v', max_frames: Optional[int] = None):
         """
         Export dataset as a video file.
         
@@ -393,6 +393,9 @@ class DatasetPlayer:
         print(f"Exporting video to {output_path}...")
         
         for i, image_path in enumerate(self.image_files):
+            if max_frames is not None and i >= max_frames:
+                break
+
             image = cv2.imread(str(image_path))
             
             if show_boxes:
@@ -505,6 +508,8 @@ def main():
                         help='Export to video file instead of playing')
     parser.add_argument('--stats', action='store_true',
                         help='Show dataset statistics and exit')
+    parser.add_argument('--max-frames', type=int, default=None,
+                        help='Maximum number of frames to process (default: all)')
     
     args = parser.parse_args()
     
@@ -532,7 +537,8 @@ def main():
             args.export,
             fps=args.fps,
             show_boxes=not args.no_boxes,
-            show_labels=not args.no_labels
+            show_labels=not args.no_labels,
+            max_frames=args.max_frames
         )
         return
     

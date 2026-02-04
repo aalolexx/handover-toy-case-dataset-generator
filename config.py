@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Tuple
 import yaml
 import os
-
+import random
 
 @dataclass
 class Config:
@@ -23,7 +23,7 @@ class Config:
     seed: int = 42
     
     # Image settings
-    img_size: int = 448
+    img_size: int = 224
     
     # Movement settings
     movement_speed: float = 3.0
@@ -37,7 +37,7 @@ class Config:
     instrument_color: Tuple[int, int, int] = (134, 134, 145)
     scene_object_color: Tuple[int, int, int] = (169, 169, 184)
     occlusion_object_color: Tuple[int, int, int] = (0, 0, 0) 
-    background_color: Tuple[int, int, int] = (255, 255, 255)
+    background_color: Tuple[int, int, int] = (242, 238, 230)
     handover_highlight_color: Tuple[int, int, int] = (255, 59, 101)
     
     # Scene objects
@@ -61,6 +61,9 @@ class Config:
     work_duration_avg: int = 25
     hold_duration_avg: int = 8
     handover_duration: int = 5
+    allow_handover_overlap: bool = False 
+    person_avoidance_radius_multiplier: float = 4.0  # Start avoiding at radius * this
+    person_separation_buffer: float = 2.0  # Extra space between persons
 
     visualize_handover: bool = False
 
@@ -102,21 +105,23 @@ class Config:
     
     @property
     def patient_table_rect(self) -> Tuple[int, int, int, int]:
-        """Get patient table rectangle (x, y, width, height)."""
+        """
+        Get patient table rectangle (x, y, width, height).
+        x and y have random offsets
+        """
         width = int(self.img_size * self.patient_table_width_ratio)
         height = int(self.img_size * self.patient_table_height_ratio)
-        x = (self.img_size - width) // 2
-        y = (self.img_size - height) // 2 - height*2
+        x = 0
+        y = 0
         return (x, y, width, height)
     
     @property
     def preparation_table_rect(self) -> Tuple[int, int, int, int]:
         """Get preparation table rectangle (x, y, width, height)."""
-        patient_rect = self.patient_table_rect
         width = int(self.img_size * self.preparation_table_width_ratio)
         height = int(self.img_size * self.preparation_table_height_ratio)
-        x = (self.img_size - width) // 2
-        y = (self.img_size - height) // 2 + height*2
+        x = 0
+        y = 0
         return (x, y, width, height)
 
 

@@ -3,29 +3,29 @@
 # Scene composition
 num_doctors: 1
 num_assistants: 1
-num_active_doctors: 2
-num_active_assistants: 2
+num_active_doctors: 1
+num_active_assistants: 1
 
 # Generation parameters
-total_num_frames: 10000
-num_seperated_videos: 10
+total_num_frames: 20000
+num_seperated_videos: 40
 seed: -1
 
 # Image settings
-img_size: 448
+img_size: 225
 
 # Scene objects
-num_scene_objects: 6
+num_scene_objects: 0
 num_instruments: 5
 
 # Person dimensions
-person_radius: 24
+person_radius: 20
 
 # Table dimensions (relative to img_size)
 patient_table_width_ratio: 0.1
-patient_table_height_ratio: 0.05
+patient_table_height_ratio: 0.1
 preparation_table_width_ratio: 0.1
-preparation_table_height_ratio: 0.05
+preparation_table_height_ratio: 0.1
 
 visualize_handover: false
 
@@ -35,6 +35,7 @@ occlusion_obj_max_num: 3
 occlusion_obj_max_size: 0.5 # As a fraction of img_size
 
 instrument_hidden_prob: 0
+allow_handover_overlap: false
 
 # Output settings
-output_dir: output_p1_o0
+output_dir: "toy_data_p1_o0"

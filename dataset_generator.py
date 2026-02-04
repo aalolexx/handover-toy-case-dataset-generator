@@ -28,7 +28,7 @@ class DatasetGenerator:
         self.render_manager = RenderManager(config)
         
         # Setup output directories
-        self.output_dir = config.output_dir
+        self.output_dir = "outputs/" + config.output_dir
         self._setup_directories()
         
         self.annotation_manager = AnnotationManager(
@@ -168,7 +168,7 @@ def main():
         description='Generate synthetic surgery action detection dataset')
     parser.add_argument('--config', '-c', type=str, default=None,
                         help='Path to configuration YAML file')
-    parser.add_argument('--output', '-o', type=str, default='output',
+    parser.add_argument('--output', '-o', type=str, default=None,
                         help='Output directory')
     parser.add_argument('--frames', '-f', type=int, default=None,
                         help='Number of frames to generate (overrides config)')

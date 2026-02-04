@@ -3,6 +3,7 @@ Scene objects like tables and random medical equipment.
 """
 from typing import Tuple
 from dataclasses import dataclass
+import random
 
 
 @dataclass
@@ -26,11 +27,63 @@ class SceneObject:
         """Get center point."""
         return (self.x + self.width / 2, self.y + self.height / 2)
     
+
+    @property
+    def position(self):
+        return (self.x, self.y)
+
+    @position.setter
+    def position(self, value):
+        self.x, self.y = value
+    
     def contains_point(self, point: Tuple[float, float]) -> bool:
         """Check if point is inside the object."""
         px, py = point
         return (self.x <= px <= self.x + self.width and
                 self.y <= py <= self.y + self.height)
+    
+    def get_random_position(self, image_size, avoid_points: list = None, avoid_radius: float = 90.0) -> Tuple[float, float]:
+        """Get a random position within the object."""
+        rx = int(random.uniform(self.x + avoid_radius, self.x + image_size - avoid_radius))
+        ry = int(random.uniform(self.y + avoid_radius, self.y + image_size - avoid_radius))
+        if (avoid_points is not None and
+            rx > avoid_points[0] and rx < avoid_points[0] + avoid_radius and
+            ry > avoid_points[1] and ry < avoid_points[1] + avoid_radius):
+            return self.get_random_position(image_size, avoid_points, avoid_radius)
+        return (rx, ry)
+    
+    def position_on_edge(self, edge: str, image_size: int, margin: float = 0.0) -> Tuple[int, int]:
+        """
+        Position this object along a specific edge of the scene.
+        
+        Args:
+            edge: One of 'top', 'bottom', 'left', 'right'
+            image_size: Size of the scene (assumes square)
+            margin: Margin from the edge
+            
+        Returns:
+            The (x, y) position for the top-left corner of the object
+        """
+        if edge == 'top':
+            # Along top edge, random x position
+            x = image_size // 2#random.randint(int(margin), int(image_size - self.width - margin))
+            y = int(margin)
+        elif edge == 'bottom':
+            # Along bottom edge, random x position
+            x = image_size // 2#random.randint(int(margin), int(image_size - self.width - margin))
+            y = int(image_size - self.height - margin)
+        elif edge == 'left':
+            # Along left edge, random y position
+            x = int(margin)
+            y = image_size // 2#random.randint(int(margin), int(image_size - self.height - margin))
+        elif edge == 'right':
+            # Along right edge, random y position
+            x = int(image_size - self.width - margin)
+            y = image_size // 2#random.randint(int(margin), int(image_size - self.height - margin))
+        else:
+            raise ValueError(f"Invalid edge: {edge}. Must be 'top', 'bottom', 'left', or 'right'")
+        
+        return (x, y)
 
 
 class PatientTable(SceneObject):
@@ -58,6 +111,8 @@ class PreparationTable(SceneObject):
         
         margin_x = 15
         margin_y = 10
+        
+        self.instrument_positions = []  # Reset positions
         
         for row in range(num_rows):
             for col in range(num_cols):

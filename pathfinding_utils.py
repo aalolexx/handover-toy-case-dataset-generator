@@ -36,7 +36,7 @@ class PathfindingGrid:
         self.obstacles: List[Tuple[int, int, int, int]] = []
         
         # A* finder with diagonal movement
-        self.finder = AStarFinder(diagonal_movement=DiagonalMovement.only_when_no_obstacle)
+        self.finder = AStarFinder(diagonal_movement=DiagonalMovement.never)
     
     def set_obstacles(self, obstacles: List[Tuple[int, int, int, int]], person_radius: float):
         """
@@ -47,7 +47,8 @@ class PathfindingGrid:
             person_radius: Radius of the person (for collision margin)
         """
         self.obstacles = obstacles
-        margin = int(person_radius) + 8
+        # Reduced margin - just enough to prevent actual collision
+        margin = int(person_radius) + 1
         
         # Reset grid to all walkable
         self.matrix = [[1 for _ in range(self.grid_size)] for _ in range(self.grid_size)]

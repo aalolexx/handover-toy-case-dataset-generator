@@ -122,12 +122,12 @@ def random_point_outside_rects(rects: List[Tuple[int, int, int, int]],
     bx, by, bw, bh = bounds
     
     for _ in range(max_attempts):
-        x = rng.uniform(bx + radius, bx + bw - radius)
-        y = rng.uniform(by + radius, by + bh - radius)
+        x = rng.uniform(bx + 2*radius, bx + bw - 2*radius)
+        y = rng.uniform(by + 2*radius, by + bh - 2*radius)
         
         valid = True
         for rect in rects:
-            if circle_rect_collision((x, y), radius + 5, rect):  # 5px margin
+            if circle_rect_collision((x, y), radius + 40, rect):  # 5px margin
                 valid = False
                 break
         
@@ -136,6 +136,13 @@ def random_point_outside_rects(rects: List[Tuple[int, int, int, int]],
     
     return None
 
+
+def random_pos_near_center(bounds, rng) -> Optional[Tuple[float, float]]:
+    bx, by, bw, bh = bounds
+    x = rng.uniform(bw // 2 - bw // 4, bw // 2 + bw // 4)
+    y = rng.uniform(bh // 2 - bh // 4, bh // 2 + bh // 4)
+    return (x, y)
+    
 
 def find_position_near_rect(rect: Tuple[int, int, int, int],
                             side: str,

@@ -87,8 +87,11 @@ python dataset_generator.py --create-config
 |occlusion_obj_appearance_prob | 0.01 | |
 |occlusion_obj_max_num | 3 | |
 |occlusion_obj_max_size | 0.5 | As a fraction of img_size|
+|instrument_hidden_prob | 0.1 | ratio of frames instrument is hidden (opacity 0) |
+|allow_handover_overlap | False | |
+|person_avoidance_radius_multiplier | 4.0 | Start avoiding at radius * this |
+|person_separation_buffer | 2 | Extra space between persons|
 
-instrument_hidden_prob: 0.01
 
 
 See `config.yaml` for all available options.
