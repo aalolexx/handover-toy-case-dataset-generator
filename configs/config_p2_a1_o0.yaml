@@ -1,0 +1,12 @@
+# Scene composition
+num_doctors: 2
+num_assistants: 2
+num_active_doctors: 1
+num_active_assistants: 1
+
+# Occlusions
+occlusion_obj_appearance_prob: 0
+instrument_hidden_prob: 0
+
+# Output settings
+output_dir: "toy_data_p2_a1_o0_grid"

@@ -1,11 +1,10 @@
 """
 Configuration module for the surgery dataset generator.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Tuple
 import yaml
-import os
-import random
+
 
 @dataclass
 class Config:
@@ -18,15 +17,17 @@ class Config:
     num_active_assistants: int = 2
     
     # Generation parameters
-    total_num_frames: int = 1000
-    num_seperated_videos: int = 4 
-    seed: int = 42
+    total_num_frames: int = 20000
+    num_seperated_videos: int = 40 
+    seed: int = 22
     
     # Image settings
-    img_size: int = 224
+    img_size: int = 256
     
     # Movement settings
-    movement_speed: float = 3.0
+    use_grid_movement: bool = True  # If True, use discrete grid; if False, use continuous movement
+    grid_size: int = 16  # Number of grid cells (only used if use_grid_movement=True)
+    movement_speed: float = 1.5  # Pixels per frame (only used for continuous movement)
     max_transition_pause: int = 60
     
     # Colors (RGB tuples)
@@ -41,20 +42,20 @@ class Config:
     handover_highlight_color: Tuple[int, int, int] = (255, 59, 101)
     
     # Scene objects
-    num_scene_objects: int = 8
+    num_scene_objects: int = 0
     num_instruments: int = 5
     
     # Person dimensions
-    person_radius: int = 20
+    person_radius: int = 16  # Used for continuous movement; grid mode uses cell_size/2
     
     # Table dimensions (relative to img_size)
-    patient_table_width_ratio: float = 0.3
-    patient_table_height_ratio: float = 0.4
-    preparation_table_width_ratio: float = 0.25
-    preparation_table_height_ratio: float = 0.1
+    patient_table_width_ratio: float = 0.0625
+    patient_table_height_ratio: float = 0.0625
+    preparation_table_width_ratio: float = 0.0625
+    preparation_table_height_ratio: float = 0.0625
     
     # Instrument dimensions
-    instrument_size: int = 10
+    instrument_size: int = 6
     
     # Action durations (in frames)
     prepare_duration_avg: int = 20
@@ -62,19 +63,24 @@ class Config:
     hold_duration_avg: int = 8
     handover_duration: int = 5
     allow_handover_overlap: bool = False 
-    person_avoidance_radius_multiplier: float = 4.0  # Start avoiding at radius * this
-    person_separation_buffer: float = 2.0  # Extra space between persons
+    person_avoidance_radius_multiplier: float = 4.0
+    person_separation_buffer: float = 2.0
 
     visualize_handover: bool = False
 
     occlusion_obj_appearance_prob: float = 0.01
     occlusion_obj_max_num: int = 3
-    occlusion_obj_max_size: float = 0.5 # As a fraction of img_size
+    occlusion_obj_max_size: float = 0.25
 
     instrument_hidden_prob: float = 0.01
     
     # Output settings
     output_dir: str = "output"
+    
+    @property
+    def cell_size(self) -> int:
+        """Get the size of each grid cell in pixels."""
+        return self.img_size // self.grid_size
     
     @classmethod
     def from_yaml(cls, path: str) -> 'Config':
@@ -105,24 +111,17 @@ class Config:
     
     @property
     def patient_table_rect(self) -> Tuple[int, int, int, int]:
-        """
-        Get patient table rectangle (x, y, width, height).
-        x and y have random offsets
-        """
+        """Get patient table rectangle (x, y, width, height)."""
         width = int(self.img_size * self.patient_table_width_ratio)
         height = int(self.img_size * self.patient_table_height_ratio)
-        x = 0
-        y = 0
-        return (x, y, width, height)
+        return (0, 0, width, height)
     
     @property
     def preparation_table_rect(self) -> Tuple[int, int, int, int]:
         """Get preparation table rectangle (x, y, width, height)."""
         width = int(self.img_size * self.preparation_table_width_ratio)
         height = int(self.img_size * self.preparation_table_height_ratio)
-        x = 0
-        y = 0
-        return (x, y, width, height)
+        return (0, 0, width, height)
 
 
 def create_default_config(path: str = "config.yaml"):

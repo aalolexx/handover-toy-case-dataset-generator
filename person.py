@@ -1,47 +1,40 @@
 """
-Person class representing doctors and assistants with movement and state management.
+Person class supporting both grid-based and continuous movement.
+Movement mode is determined by config.use_grid_movement.
 """
 from typing import Tuple, Optional, List, TYPE_CHECKING
 import math
 import numpy as np
 
 from enums import PersonType, AssistantState, DoctorState, ActionLabel
-from utils import (distance, move_towards, circle_rect_collision, 
-                   angle_between_points, clamp, find_position_near_rect,
-                   get_bounding_box, normalize_bbox)
 
 if TYPE_CHECKING:
     from instrument import Instrument
-    from scene_object import SceneObject, PatientTable, PreparationTable
-    from config import Config
+    from grid_manager import GridManager
     from pathfinding_utils import PathfindingManager
+    from config import Config
+    from scene_object import SceneObject, PatientTable, PreparationTable
+
+
+def distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+    """Calculate Euclidean distance between two points."""
+    return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
 
 class Person:
-    """Represents a doctor or assistant in the surgery scene."""
+    """
+    Represents a doctor or assistant.
+    Supports both grid-based (discrete) and continuous movement.
+    """
     
     def __init__(self, person_id: int, person_type: PersonType,
-                 position: Tuple[float, float], config: 'Config',
+                 initial_pos: Tuple[float, float], config: 'Config',
                  rng: np.random.Generator):
-        """
-        Initialize a person.
-        
-        Args:
-            person_id: Unique identifier
-            person_type: DOCTOR or ASSISTANT
-            position: Initial (x, y) position
-            config: Scene configuration
-            rng: Random number generator
-        """
         self.id = person_id
         self.person_type = person_type
-        self.position = position
         self.config = config
         self.rng = rng
-        
-        self.radius = config.person_radius
-        self.speed = config.movement_speed
-        self.is_active = False
+        self.use_grid = config.use_grid_movement
         
         # State management
         if person_type == PersonType.DOCTOR:
@@ -51,75 +44,125 @@ class Person:
             self.state = AssistantState.IDLE
             self.color = config.assistant_color
         
-        # Instrument handling
+        self.is_active = False
         self.held_instrument: Optional['Instrument'] = None
-        self.instrument_attach_angle: float = 0.0
         
-        # Movement
-        self.target_position: Optional[Tuple[float, float]] = None
-        self.waypoints: List[Tuple[float, float]] = []
-        self.wander_timer: int = 0
-        self.idle_movement_range: float = 15.0
-        self.original_position: Tuple[float, float] = position
-        
-        # Velocity smoothing (prevents jitter)
-        self.velocity: Tuple[float, float] = (0.0, 0.0)
-        self.velocity_smoothing: float = 0.3
-        
-        # Path recalculation limiting
-        self.frames_since_path_calc: int = 0
-        self.min_frames_between_path_calc: int = 15
-        
-        # Oscillation detection
-        self.position_history: List[Tuple[float, float]] = []
-        self.position_history_size: int = 10
-        self.oscillation_cooldown: int = 0
-        
-        # Collision avoidance
-        self.avoidance_radius = config.person_radius * 4
-        self.smoothed_avoidance: Tuple[float, float] = (0.0, 0.0)
-        self.avoidance_smoothing: float = 0.4
-        self.all_persons: List['Person'] = []
-        
-        # References (set by ProcessManager)
-        self.pathfinding: Optional['PathfindingManager'] = None
-        self.patient_table: Optional['PatientTable'] = None
-        self.preparation_table: Optional['PreparationTable'] = None
-        self.obstacles: List['SceneObject'] = []
+        # Position storage - depends on mode
+        if self.use_grid:
+            self._grid_pos: Tuple[int, int] = (0, 0)
+            self._home_pos: Tuple[int, int] = (0, 0)
+            self.path: List[Tuple[int, int]] = []
+            self.separation_steps_remaining: int = 0
+            self.separation_direction: Tuple[int, int] = (0, 0)
+        else:
+            self._continuous_pos: Tuple[float, float] = initial_pos
+            self._original_pos: Tuple[float, float] = initial_pos
+            self.target_position: Optional[Tuple[float, float]] = None
+            self.waypoints: List[Tuple[float, float]] = []
+            self.velocity: Tuple[float, float] = (0.0, 0.0)
+            self.wander_timer: int = 0
+            self.idle_movement_range: float = 15.0
+            self.separation_frames: int = 0
+            self.separation_direction: Tuple[float, float] = (0.0, 0.0)
         
         # State timing
         self.state_timer: int = 0
         self.state_duration: int = 0
-        self.transition_pause: int = 0
         self.move_timeout: int = 0
         self.max_move_timeout: int = 200
         
         # Handover coordination
         self.handover_partner: Optional['Person'] = None
-        self.handover_frame_count: int = 0
         
-        # Post-handover separation
-        self.separation_frames_remaining: int = 0
-        self.separation_direction: Tuple[float, float] = (0.0, 0.0)
-        self.min_separation_frames: int = 10
-        self.separation_distance: float = config.person_radius * 2  # How far to separate
-        
-        # Pre-handover approach state
-        self.is_approaching_for_handover: bool = False
-        self.approach_partner: Optional['Person'] = None
+        # References (set by ProcessManager)
+        self.grid: Optional['GridManager'] = None
+        self.pathfinding: Optional['PathfindingManager'] = None
+        self.patient_table: Optional['PatientTable'] = None
+        self.preparation_table: Optional['PreparationTable'] = None
+        self.obstacles: List['SceneObject'] = []
+        self.all_persons: List['Person'] = []
+    
+    # -------------------------------------------------------------------------
+    # Position Properties
+    # -------------------------------------------------------------------------
+    
+    @property
+    def grid_pos(self) -> Tuple[int, int]:
+        """Grid position (row, col). Only valid in grid mode."""
+        return self._grid_pos
+    
+    @grid_pos.setter
+    def grid_pos(self, value: Tuple[int, int]):
+        self._grid_pos = value
+    
+    @property
+    def home_pos(self) -> Tuple[int, int]:
+        """Home position for idle movement (grid mode)."""
+        return self._home_pos
+    
+    @home_pos.setter
+    def home_pos(self, value: Tuple[int, int]):
+        self._home_pos = value
+    
+    @property
+    def position(self) -> Tuple[float, float]:
+        """Get pixel position for rendering."""
+        if self.use_grid:
+            if self.grid:
+                return self.grid.grid_to_pixel(self._grid_pos)
+            cell_size = self.config.cell_size
+            return (self._grid_pos[1] * cell_size + cell_size / 2,
+                    self._grid_pos[0] * cell_size + cell_size / 2)
+        else:
+            return self._continuous_pos
+    
+    @position.setter
+    def position(self, value: Tuple[float, float]):
+        """Set position (continuous mode only)."""
+        if not self.use_grid:
+            self._continuous_pos = value
+    
+    @property
+    def original_position(self) -> Tuple[float, float]:
+        """Original/home position (continuous mode)."""
+        if self.use_grid:
+            return self.position
+        return self._original_pos
+    
+    @original_position.setter
+    def original_position(self, value: Tuple[float, float]):
+        if not self.use_grid:
+            self._original_pos = value
+    
+    @property
+    def radius(self) -> float:
+        """Get visual radius for rendering."""
+        if self.use_grid:
+            return self.config.cell_size / 2
+        return self.config.person_radius
+    
+    # -------------------------------------------------------------------------
+    # Setup Methods
+    # -------------------------------------------------------------------------
+    
+    def set_grid(self, grid: 'GridManager'):
+        """Set reference to grid manager (grid mode)."""
+        self.grid = grid
+    
+    def set_pathfinding(self, pathfinding: 'PathfindingManager'):
+        """Set reference to pathfinding manager (continuous mode)."""
+        self.pathfinding = pathfinding
     
     def set_tables(self, patient_table: 'PatientTable', 
                    preparation_table: 'PreparationTable',
-                   obstacles: List['SceneObject'],
-                   pathfinding: Optional['PathfindingManager'] = None):
-        """Set references to scene tables, obstacles, and pathfinding."""
+                   obstacles: List['SceneObject']):
+        """Set references to tables and obstacles."""
         self.patient_table = patient_table
         self.preparation_table = preparation_table
         self.obstacles = obstacles
-        self.pathfinding = pathfinding
     
     def set_all_persons(self, persons: List['Person']):
-        """Set reference to all persons for collision avoidance."""
+        """Set reference to all persons."""
         self.all_persons = persons
     
     def set_active(self, active: bool):
@@ -130,6 +173,10 @@ class Person:
                 self.state = DoctorState.IDLE
             else:
                 self.state = AssistantState.IDLE
+            if self.use_grid:
+                self.path = []
+            else:
+                self.waypoints = []
     
     # -------------------------------------------------------------------------
     # Main Update Loop
@@ -140,374 +187,627 @@ class Person:
                active_assistants: List['Person']):
         """Update person state and position each frame."""
         
-        # Handle post-handover separation first (highest priority)
-        if self.separation_frames_remaining > 0:
-            self._do_separation_movement()
-            return
-        
-        if self.transition_pause > 0:
-            self.transition_pause -= 1
-            self._do_idle_movement()
+        # Handle separation first
+        if self._is_separating():
+            self._do_separation()
             return
         
         if self.is_active:
-            self._update_active_behavior(available_instruments, 
-                                         active_doctors, active_assistants)
+            if self.person_type == PersonType.ASSISTANT:
+                self._update_assistant_state(available_instruments, active_doctors)
+            else:
+                self._update_doctor_state(active_assistants)
         else:
-            self._update_passive_behavior()
-        
-        # Update instrument attachment angle
-        if self.held_instrument and self.target_position:
-            self.instrument_attach_angle = angle_between_points(
-                self.position, self.target_position)
+            self._do_wander()
     
-    def _update_active_behavior(self, available_instruments: List['Instrument'],
-                                 active_doctors: List['Person'],
-                                 active_assistants: List['Person']):
-        """Update behavior for active persons."""
-        if self.person_type == PersonType.ASSISTANT:
-            self._update_assistant_state(available_instruments, active_doctors)
+    def _is_separating(self) -> bool:
+        """Check if currently in separation phase."""
+        if self.use_grid:
+            return self.separation_steps_remaining > 0
         else:
-            self._update_doctor_state(active_assistants)
-    
-    def _update_passive_behavior(self):
-        """Update behavior for inactive persons (random movement)."""
-        self._do_wander_movement()
+            return self.separation_frames > 0
     
     # -------------------------------------------------------------------------
-    # Separation Movement (Post-Handover)
+    # Movement - Mode-Specific Implementations
     # -------------------------------------------------------------------------
     
-    def _do_separation_movement(self):
-        """Move away from handover partner after handover completes."""
-        self.separation_frames_remaining -= 1
-        
-        # Calculate movement in separation direction
-        move_speed = self.speed * 0.8  # Slightly slower separation
-        dx = self.separation_direction[0] * move_speed
-        dy = self.separation_direction[1] * move_speed
-        
-        new_pos = self._clamp_to_bounds((
-            self.position[0] + dx,
-            self.position[1] + dy
-        ))
-        
-        # Only move if we won't collide
-        if not self._would_collide_with_obstacles(new_pos):
-            self.position = new_pos
-        
-        # Update instrument angle during separation
-        if self.held_instrument:
-            self.instrument_attach_angle = math.atan2(dy, dx)
+    def _move_one_step(self) -> bool:
+        """Move one step towards current target. Returns True if arrived or moved."""
+        if self.use_grid:
+            return self._grid_move_one_step()
+        else:
+            return self._continuous_move_to_target()
     
-    def _start_separation(self, from_partner: 'Person'):
-        """Start the separation phase after a handover."""
-        self.separation_frames_remaining = self.min_separation_frames
+    def _is_near_prep_table(self) -> bool:
+        """Check if near preparation table."""
+        if self.use_grid:
+            return self.grid.is_adjacent_to_prep_table(self._grid_pos)
+        else:
+            return self._distance_to_rect(self.preparation_table.rect) < self.radius + 15
+    
+    def _is_near_patient_table(self) -> bool:
+        """Check if near patient table."""
+        if self.use_grid:
+            return self.grid.is_adjacent_to_patient_table(self._grid_pos)
+        else:
+            return self._distance_to_rect(self.patient_table.rect) < self.radius + 15
+    
+    def _is_adjacent_to(self, other: 'Person') -> bool:
+        """Check if adjacent to another person."""
+        if self.use_grid:
+            return self.grid.are_adjacent(self._grid_pos, other._grid_pos)
+        else:
+            touch_dist = self.radius + other.radius + 5
+            return distance(self.position, other.position) <= touch_dist
+    
+    def _move_towards_person(self, other: 'Person'):
+        """Move towards another person."""
+        if self.use_grid:
+            self._grid_move_adjacent_to(other)
+        else:
+            self._continuous_move_towards(other.position)
+    
+    def _set_target_near_prep_table(self):
+        """Set target position near prep table."""
+        if self.use_grid:
+            target = self.grid.find_cell_adjacent_to_table(
+                self.grid.prep_table_cells, self._grid_pos,
+                self.all_persons, self.id)
+            if target:
+                self._grid_set_path_to(target)
+        else:
+            self.target_position = self._find_pos_near_table(self.preparation_table)
+            self.waypoints = []
+    
+    def _set_target_near_patient_table(self):
+        """Set target position near patient table."""
+        if self.use_grid:
+            target = self.grid.find_cell_adjacent_to_table(
+                self.grid.patient_table_cells, self._grid_pos,
+                self.all_persons, self.id)
+            if target:
+                self._grid_set_path_to(target)
+        else:
+            self.target_position = self._find_pos_near_table(self.patient_table)
+            self.waypoints = []
+    
+    # -------------------------------------------------------------------------
+    # Grid Movement Implementation
+    # -------------------------------------------------------------------------
+    
+    def _grid_move_one_step(self) -> bool:
+        """Move one step along path (grid mode)."""
+        if not self.path or not self.grid:
+            return False
         
-        # Calculate direction away from partner
-        dx = self.position[0] - from_partner.position[0]
-        dy = self.position[1] - from_partner.position[1]
+        next_pos = self.path[0]
+        
+        if self.grid.is_walkable(next_pos) and \
+           not self.grid.is_occupied_by_person(next_pos, self.id, self.all_persons):
+            self._grid_pos = next_pos
+            self.path.pop(0)
+            return True
+        
+        # Blocked - recalculate
+        if len(self.path) > 1:
+            new_path = self.grid.find_path(self._grid_pos, self.path[-1], 
+                                            self.all_persons, self.id)
+            if new_path and len(new_path) > 1:
+                self.path = new_path[1:]
+                return self._grid_move_one_step()
+        
+        return False
+    
+    def _grid_set_path_to(self, target: Tuple[int, int]):
+        """Set path to target (grid mode)."""
+        if not self.grid:
+            return
+        path = self.grid.find_path(self._grid_pos, target, self.all_persons, self.id)
+        self.path = path[1:] if path and len(path) > 1 else []
+    
+    def _grid_move_adjacent_to(self, other: 'Person'):
+        """Move to become adjacent to another person (grid mode)."""
+        if self.grid.are_adjacent(self._grid_pos, other._grid_pos):
+            self.path = []
+            return
+        
+        row, col = other._grid_pos
+        best_cell = None
+        best_dist = float('inf')
+        
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            neighbor = (row + dr, col + dc)
+            if self.grid.is_walkable(neighbor):
+                if not self.grid.is_occupied_by_person(neighbor, self.id, self.all_persons):
+                    dist = self.grid.manhattan_distance(self._grid_pos, neighbor)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_cell = neighbor
+        
+        if best_cell and self._grid_pos != best_cell:
+            if not self.path or self.path[-1] != best_cell:
+                self._grid_set_path_to(best_cell)
+            self._grid_move_one_step()
+    
+    def _grid_do_idle_movement(self):
+        """Small movements around home position (grid mode)."""
+        if self.rng.random() < 0.05:
+            adjacent = self.grid.get_adjacent_walkable_cells(
+                self._grid_pos, self.all_persons, self.id)
+            if adjacent:
+                adjacent.sort(key=lambda p: self.grid.manhattan_distance(p, self._home_pos))
+                idx = min(self.rng.integers(0, max(1, len(adjacent))), len(adjacent) - 1)
+                self._grid_pos = adjacent[idx]
+    
+    # -------------------------------------------------------------------------
+    # Continuous Movement Implementation
+    # -------------------------------------------------------------------------
+    
+    def _continuous_move_to_target(self) -> bool:
+        """Move towards target (continuous mode). Returns True if arrived."""
+        if self.target_position is None:
+            return True
+        
+        dist = distance(self.position, self.target_position)
+        if dist < self.config.movement_speed * 2:
+            self._continuous_pos = self.target_position
+            self.waypoints = []
+            return True
+        
+        # Get path if needed
+        if not self.waypoints and self.pathfinding:
+            path = self.pathfinding.get_path(self.position, self.target_position)
+            if path and len(path) > 1:
+                self.waypoints = path[1:]
+        
+        # Determine current waypoint
+        current_target = self.target_position
+        if self.waypoints:
+            current_target = self.waypoints[0]
+            if distance(self.position, current_target) < self.config.movement_speed * 1.5:
+                self.waypoints.pop(0)
+                current_target = self.waypoints[0] if self.waypoints else self.target_position
+        
+        # Move towards target
+        self._continuous_move_towards(current_target)
+        return False
+    
+    def _continuous_move_towards(self, target: Tuple[float, float]):
+        """Move one step towards target position."""
+        dx = target[0] - self.position[0]
+        dy = target[1] - self.position[1]
         dist = math.sqrt(dx * dx + dy * dy)
         
-        if dist > 0.001:
-            self.separation_direction = (dx / dist, dy / dist)
+        if dist < 0.001:
+            return
+        
+        # Apply avoidance
+        avoid_x, avoid_y = self._get_avoidance_force()
+        combined_x = dx / dist + avoid_x * 0.3
+        combined_y = dy / dist + avoid_y * 0.3
+        
+        combined_dist = math.sqrt(combined_x**2 + combined_y**2)
+        if combined_dist > 0.001:
+            combined_x /= combined_dist
+            combined_y /= combined_dist
+        
+        # Apply movement
+        new_x = self.position[0] + combined_x * self.config.movement_speed
+        new_y = self.position[1] + combined_y * self.config.movement_speed
+        new_pos = self._clamp_to_bounds((new_x, new_y))
+        
+        if not self._would_collide(new_pos):
+            self._continuous_pos = new_pos
+    
+    def _find_pos_near_table(self, table) -> Tuple[float, float]:
+        """Find a position near a table (continuous mode)."""
+        valid_sides = self._get_valid_sides(table)
+        side = self.rng.choice(valid_sides) if valid_sides else 'top'
+        
+        margin = self.radius + 10
+        rect = table.rect
+        
+        if side == 'left':
+            x = rect[0] - margin
+            y = rect[1] + rect[3] / 2
+        elif side == 'right':
+            x = rect[0] + rect[2] + margin
+            y = rect[1] + rect[3] / 2
+        elif side == 'top':
+            x = rect[0] + rect[2] / 2
+            y = rect[1] - margin
         else:
-            # Fallback: random direction
-            angle = self.rng.uniform(0, 2 * math.pi)
-            self.separation_direction = (math.cos(angle), math.sin(angle))
+            x = rect[0] + rect[2] / 2
+            y = rect[1] + rect[3] + margin
+        
+        return self._clamp_to_bounds((x, y))
+    
+    def _get_valid_sides(self, table) -> List[str]:
+        """Get accessible sides of a table."""
+        margin = self.radius + 25
+        valid = []
+        
+        if table.x > margin:
+            valid.append('left')
+        if table.x + table.width < self.config.img_size - margin:
+            valid.append('right')
+        if table.y > margin:
+            valid.append('top')
+        if table.y + table.height < self.config.img_size - margin:
+            valid.append('bottom')
+        
+        return valid if valid else ['left', 'right', 'top', 'bottom']
+    
+    def _get_avoidance_force(self) -> Tuple[float, float]:
+        """Calculate steering force to avoid other persons."""
+        force_x, force_y = 0.0, 0.0
+        avoidance_radius = self.radius * 4
+        
+        for other in self.all_persons:
+            if other.id == self.id:
+                continue
+            if self.handover_partner and self.handover_partner.id == other.id:
+                continue
+            
+            dx = self.position[0] - other.position[0]
+            dy = self.position[1] - other.position[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            
+            if 0 < dist < avoidance_radius:
+                factor = (avoidance_radius - dist) / avoidance_radius
+                force_x += (dx / dist) * factor
+                force_y += (dy / dist) * factor
+        
+        return (force_x, force_y)
+    
+    def _would_collide(self, pos: Tuple[float, float]) -> bool:
+        """Check if position would cause collision."""
+        all_obs = self.obstacles.copy()
+        if self.patient_table:
+            all_obs.append(self.patient_table)
+        if self.preparation_table:
+            all_obs.append(self.preparation_table)
+        
+        for obs in all_obs:
+            if self._circle_rect_collision(pos, self.radius + 2, obs.rect):
+                return True
+        
+        return False
+    
+    def _circle_rect_collision(self, center: Tuple[float, float], radius: float,
+                                rect: Tuple[int, int, int, int]) -> bool:
+        """Check circle-rectangle collision."""
+        rx, ry, rw, rh = rect
+        closest_x = max(rx, min(center[0], rx + rw))
+        closest_y = max(ry, min(center[1], ry + rh))
+        dist = math.sqrt((center[0] - closest_x)**2 + (center[1] - closest_y)**2)
+        return dist < radius
+    
+    def _distance_to_rect(self, rect: Tuple[int, int, int, int]) -> float:
+        """Calculate distance to nearest point on rectangle."""
+        rx, ry, rw, rh = rect
+        nearest_x = max(rx, min(self.position[0], rx + rw))
+        nearest_y = max(ry, min(self.position[1], ry + rh))
+        return distance(self.position, (nearest_x, nearest_y))
+    
+    def _continuous_do_idle_movement(self):
+        """Small random movements (continuous mode)."""
+        self.wander_timer -= 1
+        if self.wander_timer <= 0:
+            offset_x = self.rng.uniform(-self.idle_movement_range, self.idle_movement_range)
+            offset_y = self.rng.uniform(-self.idle_movement_range, self.idle_movement_range)
+            target = (self._original_pos[0] + offset_x, self._original_pos[1] + offset_y)
+            self.target_position = self._clamp_to_bounds(target)
+            self.wander_timer = self.rng.integers(20, 60)
+        
+        self._continuous_move_to_target()
+    
+    def _clamp_to_bounds(self, pos: Tuple[float, float]) -> Tuple[float, float]:
+        """Clamp position to scene bounds."""
+        margin = self.radius + 5
+        return (
+            max(margin, min(self.config.img_size - margin, pos[0])),
+            max(margin, min(self.config.img_size - margin, pos[1]))
+        )
     
     # -------------------------------------------------------------------------
-    # State Machines
+    # Separation
+    # -------------------------------------------------------------------------
+    
+    def _start_separation(self, from_partner: 'Person'):
+        """Start moving away from partner after handover."""
+        if self.use_grid:
+            self.separation_steps_remaining = 2
+            dr = self._grid_pos[0] - from_partner._grid_pos[0]
+            dc = self._grid_pos[1] - from_partner._grid_pos[1]
+            if dr != 0: dr = dr // abs(dr)
+            if dc != 0: dc = dc // abs(dc)
+            if dr == 0 and dc == 0:
+                dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+                dr, dc = dirs[self.rng.integers(4)]
+            self.separation_direction = (dr, dc)
+        else:
+            self.separation_frames = 10
+            dx = self.position[0] - from_partner.position[0]
+            dy = self.position[1] - from_partner.position[1]
+            dist = math.sqrt(dx*dx + dy*dy)
+            if dist > 0.001:
+                self.separation_direction = (dx/dist, dy/dist)
+            else:
+                angle = self.rng.uniform(0, 2 * math.pi)
+                self.separation_direction = (math.cos(angle), math.sin(angle))
+    
+    def _do_separation(self):
+        """Move away from partner."""
+        if self.use_grid:
+            self.separation_steps_remaining -= 1
+            dr, dc = int(self.separation_direction[0]), int(self.separation_direction[1])
+            new_pos = (self._grid_pos[0] + dr, self._grid_pos[1] + dc)
+            
+            if self.grid.is_walkable(new_pos) and \
+               not self.grid.is_occupied_by_person(new_pos, self.id, self.all_persons):
+                self._grid_pos = new_pos
+            else:
+                for alt_dr, alt_dc in [(dc, dr), (-dc, -dr), (-dr, -dc)]:
+                    alt_pos = (self._grid_pos[0] + alt_dr, self._grid_pos[1] + alt_dc)
+                    if self.grid.is_walkable(alt_pos) and \
+                       not self.grid.is_occupied_by_person(alt_pos, self.id, self.all_persons):
+                        self._grid_pos = alt_pos
+                        break
+        else:
+            self.separation_frames -= 1
+            dx = self.separation_direction[0] * self.config.movement_speed * 0.8
+            dy = self.separation_direction[1] * self.config.movement_speed * 0.8
+            new_pos = self._clamp_to_bounds((self.position[0] + dx, self.position[1] + dy))
+            if not self._would_collide(new_pos):
+                self._continuous_pos = new_pos
+    
+    # -------------------------------------------------------------------------
+    # Wandering & Idle
+    # -------------------------------------------------------------------------
+    
+    def _do_wander(self):
+        """Random wandering for inactive persons."""
+        if self.use_grid:
+            if not self.path and self.rng.random() < 0.02:
+                target = self.grid.get_random_walkable_cell(self.rng, self.all_persons, self.id)
+                if target:
+                    self._grid_set_path_to(target)
+            self._grid_move_one_step()
+        else:
+            self.wander_timer -= 1
+            if self.wander_timer <= 0 or self.target_position is None:
+                margin = self.radius + 10
+                for _ in range(20):
+                    x = self.rng.uniform(margin, self.config.img_size - margin)
+                    y = self.rng.uniform(margin, self.config.img_size - margin)
+                    if not self._would_collide((x, y)):
+                        self.target_position = (x, y)
+                        break
+                self.wander_timer = self.rng.integers(60, 180)
+            self._continuous_move_to_target()
+    
+    def _do_idle_movement(self):
+        """Small movements when idle."""
+        if self.use_grid:
+            self._grid_do_idle_movement()
+        else:
+            self._continuous_do_idle_movement()
+    
+    # -------------------------------------------------------------------------
+    # Assistant State Machine
     # -------------------------------------------------------------------------
     
     def _update_assistant_state(self, available_instruments: List['Instrument'],
-                             active_doctors: List['Person']):
-        """Update assistant state machine with goal-oriented behavior."""
+                                 active_doctors: List['Person']):
+        """Update assistant state machine."""
         state = self.state
         
-        # -------------------------------------------------------------------------
-        # IDLE: Brief pause, then decide next action
-        # -------------------------------------------------------------------------
         if state == AssistantState.IDLE:
             self._do_idle_movement()
             self.state_timer += 1
             
-            # Short idle period, then take action
-            if self.state_timer > self.rng.integers(10, 30):
+            if self.state_timer > self.rng.integers(5, 15):
                 self.state_timer = 0
                 
-                if self.held_instrument is None:
-                    # Goal: Get an instrument
-                    if available_instruments:
-                        self.state = AssistantState.MOVING_TO_PREP_TABLE
-                        self._set_target_near_prep_table()
-                        self.move_timeout = 0
-                else:
-                    # Goal: Deliver instrument to doctor
+                if self.held_instrument is None and available_instruments:
+                    self._set_target_near_prep_table()
+                    self.state = AssistantState.MOVING_TO_PREP_TABLE
+                    self.move_timeout = 0
+                elif self.held_instrument:
                     doctor = self._find_available_doctor(active_doctors)
                     if doctor:
                         self.handover_partner = doctor
                         self.state = AssistantState.MOVING_TO_DOCTOR
-                        self.is_approaching_for_handover = True
-                        self.approach_partner = doctor
-                        self._set_target_for_exact_touch(doctor)
                         self.move_timeout = 0
         
-        # -------------------------------------------------------------------------
-        # MOVING_TO_PREP_TABLE: Going to pick up an instrument
-        # -------------------------------------------------------------------------
         elif state == AssistantState.MOVING_TO_PREP_TABLE:
             self.move_timeout += 1
             
-            # Check if close enough to prep table (proximity-based arrival)
-            if self.preparation_table:
-                dist_to_table = self._distance_to_rect(self.preparation_table.rect)
-                if dist_to_table < self.radius + 15:
-                    # Close enough - start preparing
-                    self.state = AssistantState.PREPARING
-                    self.state_timer = 0
-                    self.state_duration = int(self.rng.integers(
-                        max(1, self.config.prepare_duration_avg - 10),
-                        self.config.prepare_duration_avg + 10))
-                    self.move_timeout = 0
-                    return
-            
-            if self._move_to_target():
+            if self._is_near_prep_table():
                 self.state = AssistantState.PREPARING
                 self.state_timer = 0
-                self.state_duration = int(self.rng.integers(
+                self.state_duration = self.rng.integers(
                     max(1, self.config.prepare_duration_avg - 10),
-                    self.config.prepare_duration_avg + 10))
-                self.move_timeout = 0
+                    self.config.prepare_duration_avg + 10)
+                if self.use_grid:
+                    self.path = []
+                else:
+                    self.waypoints = []
             elif self.move_timeout > self.max_move_timeout:
-                # Timeout - reset and try again
                 self._reset_to_idle()
+            else:
+                self._move_one_step()
         
-        # -------------------------------------------------------------------------
-        # PREPARING: At prep table, picking up instrument
-        # -------------------------------------------------------------------------
         elif state == AssistantState.PREPARING:
-            self._do_idle_movement()
             self.state_timer += 1
             
             if self.state_timer >= self.state_duration:
                 if self.held_instrument is None:
                     instrument = self._pick_up_instrument(available_instruments)
                     if instrument:
-                        # Successfully picked up - now find a doctor
                         doctor = self._find_available_doctor(active_doctors)
                         if doctor:
                             self.handover_partner = doctor
                             self.state = AssistantState.MOVING_TO_DOCTOR
-                            self.is_approaching_for_handover = True
-                            self.approach_partner = doctor
-                            self._set_target_for_exact_touch(doctor)
-                            self.move_timeout = 0
                         else:
-                            # No doctor available, wait briefly then try again
                             self.state = AssistantState.HOLDING
                             self.state_timer = 0
                     else:
-                        # No instrument available
                         self._reset_to_idle()
                 else:
-                    # Already holding instrument (returning it)
                     self._lay_down_instrument()
                     self._reset_to_idle()
         
-        # -------------------------------------------------------------------------
-        # HOLDING: Has instrument, waiting for available doctor
-        # -------------------------------------------------------------------------
         elif state == AssistantState.HOLDING:
             self._do_idle_movement()
             self.state_timer += 1
             
-            # Check for available doctor every few frames
             if self.state_timer % 10 == 0:
                 doctor = self._find_available_doctor(active_doctors)
                 if doctor:
                     self.handover_partner = doctor
                     self.state = AssistantState.MOVING_TO_DOCTOR
-                    self.is_approaching_for_handover = True
-                    self.approach_partner = doctor
-                    self._set_target_for_exact_touch(doctor)
-                    self.move_timeout = 0
                     self.state_timer = 0
             
-            # If waiting too long, return instrument to table
-            if self.state_timer > 300:  # ~5 seconds at 60fps
-                self.state = AssistantState.MOVING_TO_PREP_TABLE
+            if self.state_timer > 150:
                 self._set_target_near_prep_table()
-                self.move_timeout = 0
+                self.state = AssistantState.MOVING_TO_PREP_TABLE
                 self.state_timer = 0
         
-        # -------------------------------------------------------------------------
-        # MOVING_TO_DOCTOR: Approaching for handover
-        # -------------------------------------------------------------------------
         elif state == AssistantState.MOVING_TO_DOCTOR:
             self.move_timeout += 1
             
             if self.handover_partner:
-                # Check distance to partner
-                dist_to_partner = distance(self.position, self.handover_partner.position)
-                touch_distance = self.radius + self.handover_partner.radius
-                
-                # Update target to track doctor's current position
-                if self.move_timeout % 10 == 0:
-                    self._set_target_for_exact_touch(self.handover_partner)
-                
-                # Check if we've reached touch position (at or closer than touch distance + small tolerance)
-                if dist_to_partner <= touch_distance + self.speed:
-                    # Snap to exact touch position
-                    self._snap_to_exact_touch(self.handover_partner)
-                    
-                    if self._can_start_handover_with_partner():
+                if self._is_adjacent_to(self.handover_partner):
+                    if self._can_start_handover():
                         self._start_giving_handover()
                     else:
-                        # Doctor became unavailable, find another or wait
-                        new_doctor = self._find_available_doctor(active_doctors)
-                        if new_doctor and new_doctor.id != (self.handover_partner.id if self.handover_partner else -1):
-                            self.handover_partner = new_doctor
-                            self.approach_partner = new_doctor
-                            self._set_target_for_exact_touch(new_doctor)
-                            self.move_timeout = 0
-                        else:
-                            self.state = AssistantState.HOLDING
-                            self.handover_partner = None
-                            self.is_approaching_for_handover = False
-                            self.approach_partner = None
-                            self.state_timer = 0
+                        self.state = AssistantState.HOLDING
+                        self.handover_partner = None
+                        self.state_timer = 0
                 else:
-                    # Continue approaching
-                    self._move_towards_partner_for_handover()
+                    self._move_towards_person(self.handover_partner)
             
             if self.move_timeout > self.max_move_timeout:
-                # Timeout - doctor unreachable
                 self.state = AssistantState.HOLDING
-
-                if self.held_instrument is None:
-                    print("-> PART A: No instrument but holding")
                 self.handover_partner = None
-                self.is_approaching_for_handover = False
-                self.approach_partner = None
-                self.move_timeout = 0
                 self.state_timer = 0
         
-        # -------------------------------------------------------------------------
-        # GIVING: Handing instrument to doctor - STAND COMPLETELY STILL
-        # -------------------------------------------------------------------------
         elif state == AssistantState.GIVING:
-            # NO MOVEMENT during handover - stand completely still
-            self.handover_frame_count += 1
-            if self.handover_frame_count >= self.state_duration:
-                self._complete_handover_give()
+            self.state_timer += 1
+            if self.state_timer >= self.state_duration:
+                self._complete_give_to_doctor()
         
-        # -------------------------------------------------------------------------
-        # WAITING_BY_DOCTOR: Waiting for doctor to finish working
-        # -------------------------------------------------------------------------
         elif state == AssistantState.WAITING_BY_DOCTOR:
             if self.handover_partner:
                 doctor = self.handover_partner
-                dist_to_doctor = distance(self.position, doctor.position)
-                touch_distance = self.radius + doctor.radius
                 
-                # Check if doctor is done working and ready to give back
-                if doctor.state == DoctorState.HOLDING and doctor.held_instrument is not None:
-                    # Doctor is ready - approach for handover
-                    if dist_to_doctor > touch_distance + self.speed * 2:
-                        # Need to approach
-                        self.is_approaching_for_handover = True
-                        self.approach_partner = doctor
-                        self._move_towards_partner_for_handover()
-                    else:
-                        # Close enough - just wait for doctor to initiate
-                        self._snap_to_exact_touch(doctor)
-                elif dist_to_doctor > touch_distance + self.radius * 2:
-                    # Stay close to the doctor (but not too close)
-                    self._set_target_near_person(doctor)
-                    self._move_to_target()
-                else:
-                    # We're close enough, do minimal idle movement
-                    self._do_minimal_idle_movement()
-                
-                # If doctor lost instrument somehow, go back to idle
-                if doctor.held_instrument is None:
-                    if doctor.state not in [DoctorState.GIVING, DoctorState.WORKING, DoctorState.HOLDING]:
-                        self._reset_to_idle()
+                if doctor.state == DoctorState.GIVING:
+                    self.state = AssistantState.RECEIVING
+                    self.state_timer = 0
+                    self.state_duration = self.config.handover_duration
+                elif doctor.held_instrument is None and doctor.state == DoctorState.IDLE:
+                    self._reset_to_idle()
+                elif not self._is_adjacent_to(doctor):
+                    self._move_towards_person(doctor)
             else:
                 self._reset_to_idle()
         
-        # -------------------------------------------------------------------------
-        # RECEIVING: Getting instrument back from doctor - STAND COMPLETELY STILL
-        # -------------------------------------------------------------------------
         elif state == AssistantState.RECEIVING:
-            # NO MOVEMENT during handover - stand completely still
-            self.handover_frame_count += 1
-            if self.handover_frame_count >= self.state_duration:
-                self._complete_handover_receive()
+            self.state_timer += 1
+            if self.state_timer >= self.state_duration:
+                self._complete_receive_from_doctor()
         
-        # -------------------------------------------------------------------------
-        # MOVING_FROM_DOCTOR: Returning instrument to prep table
-        # -------------------------------------------------------------------------
         elif state == AssistantState.MOVING_FROM_DOCTOR:
             self.move_timeout += 1
             
-            # Check if close enough to prep table
-            if self.preparation_table:
-                dist_to_table = self._distance_to_rect(self.preparation_table.rect)
-                if dist_to_table < self.radius + 15:
-                    self.state = AssistantState.PREPARING
-                    self.state_timer = 0
-                    self.state_duration = int(self.rng.integers(10, 30))
-                    self.move_timeout = 0
-                    return
-            
-            if self._move_to_target():
-                # Arrived at prep table area - go to preparing to put down instrument
+            if self._is_near_prep_table():
                 self.state = AssistantState.PREPARING
                 self.state_timer = 0
-                self.state_duration = int(self.rng.integers(10, 30))
-                self.move_timeout = 0
+                self.state_duration = self.rng.integers(5, 15)
             elif self.move_timeout > self.max_move_timeout:
-                # Just go to preparing where we are
                 self.state = AssistantState.PREPARING
                 self.state_timer = 0
-                self.state_duration = int(self.rng.integers(10, 30))
-                self.move_timeout = 0
-
-    def _distance_to_rect(self, rect: Tuple[int, int, int, int]) -> float:
-        """Calculate distance from current position to nearest point on rectangle."""
-        rx, ry, rw, rh = rect
-        # Find nearest point on rectangle
-        nearest_x = max(rx, min(self.position[0], rx + rw))
-        nearest_y = max(ry, min(self.position[1], ry + rh))
-        return distance(self.position, (nearest_x, nearest_y))
-
+                self.state_duration = self.rng.integers(5, 15)
+            else:
+                self._move_one_step()
+    
+    # -------------------------------------------------------------------------
+    # Doctor State Machine
+    # -------------------------------------------------------------------------
+    
+    def _update_doctor_state(self, active_assistants: List['Person']):
+        """Update doctor state machine."""
+        state = self.state
+        
+        if state == DoctorState.IDLE:
+            approaching = self._find_approaching_assistant(active_assistants)
+            if approaching:
+                if not self._is_adjacent_to(approaching):
+                    self._move_towards_person(approaching)
+            else:
+                self._do_idle_movement()
+                if not self._is_near_patient_table():
+                    self._set_target_near_patient_table()
+                    self._move_one_step()
+        
+        elif state == DoctorState.RECEIVING:
+            pass
+        
+        elif state == DoctorState.HOLDING:
+            self._do_idle_movement()
+            self.state_timer += 1
+            
+            if self.state_timer > self.rng.integers(5, 20):
+                self.state = DoctorState.WORKING
+                self.state_timer = 0
+                self.state_duration = max(15, int(self.rng.normal(
+                    self.config.work_duration_avg, 10)))
+                if self.held_instrument:
+                    self.held_instrument.start_use()
+        
+        elif state == DoctorState.WORKING:
+            self._do_idle_movement()
+            self.state_timer += 1
+            
+            if self.state_timer >= self.state_duration:
+                if self.held_instrument:
+                    self.held_instrument.stop_use()
+                
+                assistant = self._find_assistant_for_return(active_assistants)
+                if assistant:
+                    self._start_giving_to_assistant(assistant)
+                else:
+                    self.state = DoctorState.HOLDING
+                    self.state_timer = 100
+        
+        elif state == DoctorState.GIVING:
+            self.state_timer += 1
+    
+    # -------------------------------------------------------------------------
+    # Helper Methods
+    # -------------------------------------------------------------------------
+    
     def _find_available_doctor(self, active_doctors: List['Person']) -> Optional['Person']:
         """Find a doctor that can receive an instrument."""
         available = []
         
         for doctor in active_doctors:
-            # Doctor must not already have an instrument
             if doctor.held_instrument is not None:
                 continue
-            
-            # Doctor must be in a state that can receive
             if doctor.state not in [DoctorState.IDLE, DoctorState.HOLDING]:
                 continue
-            
-            # Doctor must not be separating
-            if doctor.separation_frames_remaining > 0:
+            if doctor._is_separating():
                 continue
             
-            # Doctor must not already have an assistant coming to them
             already_targeted = False
             for person in self.all_persons:
                 if person.id == self.id:
                     continue
-                if (person.person_type == PersonType.ASSISTANT and 
+                if (person.person_type == PersonType.ASSISTANT and
                     person.state == AssistantState.MOVING_TO_DOCTOR and
-                    person.handover_partner is not None and
+                    person.handover_partner and
                     person.handover_partner.id == doctor.id):
                     already_targeted = True
                     break
@@ -518,810 +818,77 @@ class Person:
         if not available:
             return None
         
-        # Prefer closest doctor
-        return min(available, key=lambda d: distance(self.position, d.position))
-
-
-    def _can_start_handover_with_partner(self) -> bool:
-        """Check if we can start a handover with our current partner."""
+        if self.use_grid:
+            return min(available, 
+                       key=lambda d: self.grid.manhattan_distance(self._grid_pos, d._grid_pos))
+        else:
+            return min(available, key=lambda d: distance(self.position, d.position))
+    
+    def _find_approaching_assistant(self, active_assistants: List['Person']) -> Optional['Person']:
+        """Find assistant approaching this doctor."""
+        for assistant in active_assistants:
+            if (assistant.state == AssistantState.MOVING_TO_DOCTOR and
+                assistant.handover_partner and
+                assistant.handover_partner.id == self.id):
+                return assistant
+        return None
+    
+    def _find_assistant_for_return(self, active_assistants: List['Person']) -> Optional['Person']:
+        """Find assistant to return instrument to."""
+        for assistant in active_assistants:
+            if (assistant.state == AssistantState.WAITING_BY_DOCTOR and
+                assistant.handover_partner and
+                assistant.handover_partner.id == self.id and
+                assistant.held_instrument is None and
+                not assistant._is_separating()):
+                return assistant
+        
+        idle = [a for a in active_assistants
+                if a.state == AssistantState.IDLE and
+                a.held_instrument is None and
+                not a._is_separating()]
+        
+        if idle:
+            if self.use_grid:
+                return min(idle, 
+                           key=lambda a: self.grid.manhattan_distance(self._grid_pos, a._grid_pos))
+            else:
+                return min(idle, key=lambda a: distance(self.position, a.position))
+        
+        return None
+    
+    def _can_start_handover(self) -> bool:
+        """Check if handover can start."""
         if not self.handover_partner:
             return False
         if self.handover_partner.held_instrument is not None:
             return False
-        #if self.handover_partner.separation_frames_remaining > 0:
-        #    return False
+        if self.handover_partner.state not in [DoctorState.IDLE, DoctorState.HOLDING]:
+            return False
+        if self.handover_partner._is_separating():
+            return False
         return True
-
-
+    
     def _start_giving_handover(self):
-        """Start the giving handover process."""
+        """Start giving instrument to doctor."""
         if not self.handover_partner:
             return
-        
-        # Ensure both parties are exactly touching
-        self._snap_to_exact_touch(self.handover_partner)
         
         self.state = AssistantState.GIVING
         self.handover_partner.state = DoctorState.RECEIVING
         self.handover_partner.handover_partner = self
-        self.handover_frame_count = 0
-        self.handover_partner.handover_frame_count = 0
+        self.state_timer = 0
+        self.handover_partner.state_timer = 0
         self.state_duration = self.config.handover_duration
         self.handover_partner.state_duration = self.config.handover_duration
-        self.move_timeout = 0
         
-        # Clear approach flags
-        self.is_approaching_for_handover = False
-        self.approach_partner = None
-
-
-    def _reset_to_idle(self):
-        """Reset to idle state with clean slate."""
-        self.state = AssistantState.IDLE
-        self.state_timer = 0
-        self.handover_partner = None
-        self.move_timeout = 0
-        self.waypoints = []
-        self.is_approaching_for_handover = False
-        self.approach_partner = None
-    
-
-    def _update_doctor_state(self, active_assistants: List['Person']):
-        """Update doctor state machine."""
-        state = self.state
-        
-        # -------------------------------------------------------------------------
-        # IDLE: Waiting for instrument, stay near patient table
-        # -------------------------------------------------------------------------
-        if state == DoctorState.IDLE:
-            # Check if an assistant is approaching for handover
-            approaching_assistant = self._find_approaching_assistant(active_assistants)
-            if approaching_assistant:
-                # Move towards the assistant to meet them
-                self._move_towards_approaching_assistant(approaching_assistant)
-            else:
-                self._do_idle_movement()
-                
-                # Stay near patient table
-                if self.patient_table:
-                    dist_to_table = distance(self.position, self.patient_table.center)
-                    if dist_to_table > 60:
-                        self._set_target_near_patient_table()
-        
-        # -------------------------------------------------------------------------
-        # HOLDING: Has instrument, will start working
-        # -------------------------------------------------------------------------
-        elif state == DoctorState.HOLDING:
-            self._do_idle_movement()
-            self.state_timer += 1
-            
-            # Brief pause then start working
-            if self.state_timer > self.rng.integers(10, 40):
-                self.state = DoctorState.WORKING
-                self.state_timer = 0
-                self.state_duration = int(self.rng.normal(self.config.work_duration_avg, 10))
-                self.state_duration = max(30, self.state_duration)  # Minimum work time
-                if self.held_instrument:
-                    self.held_instrument.start_use()
-        
-        # -------------------------------------------------------------------------
-        # WORKING: Using the instrument
-        # -------------------------------------------------------------------------
-        elif state == DoctorState.WORKING:
-            # Small movements while working
-            self._do_idle_movement()
-            self.state_timer += 1
-            
-            if self.state_timer >= self.state_duration:
-                if self.held_instrument:
-                    self.held_instrument.stop_use()
-                
-                # Try to give instrument back
-                assistant = self._find_assistant_for_return(active_assistants)
-                if assistant:
-                    self._start_giving_to_assistant(assistant)
-                else:
-                    # No assistant available, keep holding and try again later
-                    self.state = DoctorState.HOLDING
-                    self.state_timer = 0
-        
-        # -------------------------------------------------------------------------
-        # GIVING: Handing instrument back to assistant - STAND COMPLETELY STILL
-        # -------------------------------------------------------------------------
-        elif state == DoctorState.GIVING:
-            # NO MOVEMENT during handover - stand completely still
-            self.handover_frame_count += 1
-            if self.handover_frame_count >= self.state_duration:
-                self._complete_handover_give()
-        
-        # -------------------------------------------------------------------------
-        # RECEIVING: Getting instrument from assistant - STAND COMPLETELY STILL
-        # -------------------------------------------------------------------------
-        elif state == DoctorState.RECEIVING:
-            # NO MOVEMENT during handover - stand completely still
-            # Handover completion is handled by assistant's GIVING state
-            pass
-
-
-    def _find_approaching_assistant(self, active_assistants: List['Person']) -> Optional['Person']:
-        """Find an assistant that is approaching this doctor for a handover."""
-        for assistant in active_assistants:
-            if (assistant.is_approaching_for_handover and 
-                assistant.approach_partner is not None and
-                assistant.approach_partner.id == self.id):
-                return assistant
-        return None
-    
-    
-    def _move_towards_approaching_assistant(self, assistant: 'Person'):
-        """Move towards an assistant that is approaching for handover."""
-        dist = distance(self.position, assistant.position)
-        touch_distance = self.radius + assistant.radius
-        
-        # If we're close enough to touch, stop and wait for handover to start
-        if dist <= touch_distance + self.speed:
-            return
-        
-        # Move towards the assistant (but don't overshoot)
-        dx = assistant.position[0] - self.position[0]
-        dy = assistant.position[1] - self.position[1]
-        
-        if dist > 0.001:
-            # Move at half speed to let assistant lead the approach
-            move_dist = min(self.speed * 0.5, dist - touch_distance)
-            if move_dist > 0:
-                new_pos = self._clamp_to_bounds((
-                    self.position[0] + (dx / dist) * move_dist,
-                    self.position[1] + (dy / dist) * move_dist
-                ))
-                
-                if not self._would_collide_with_obstacles(new_pos):
-                    self.position = new_pos
-
-
-    def _find_assistant_for_return(self, active_assistants: List['Person']) -> Optional['Person']:
-        """Find an assistant to return the instrument to."""
-        # First priority: assistant waiting specifically for us
-        for assistant in active_assistants:
-            if (assistant.handover_partner is not None and
-                assistant.handover_partner.id == self.id and
-                assistant.held_instrument is None):
-                #assistant.separation_frames_remaining == 0):
-                return assistant
-        
-        # Second priority: any idle assistant without instrument
-        idle_assistants = [
-            a for a in active_assistants
-            if a.held_instrument is None and
-               a.separation_frames_remaining == 0
-        ]
-
-        if idle_assistants:
-            return min(idle_assistants, key=lambda a: distance(self.position, a.position))
-        
-        print("STILL NO ASSISTANT!")
-
-        for assistant in active_assistants:
-            print(assistant.state)
-
-        return None
-
-
-    def _start_giving_to_assistant(self, assistant: 'Person'):
-        """Start giving instrument to an assistant (only if close enough)."""
-        dist = distance(self.position, assistant.position)
-        touch_distance = self.radius + assistant.radius
-        
-        # Only start handover if assistant is close enough (no teleporting!)
-        if dist > touch_distance + self.speed * 2:
-            # Assistant is too far - they need to approach first
-            # Signal the assistant to approach us
-            assistant.handover_partner = self
-            assistant.is_approaching_for_handover = True
-            assistant.approach_partner = self
-            assistant._set_target_for_exact_touch(self)
-            assistant.state = AssistantState.MOVING_TO_DOCTOR
-            
-            # Doctor waits - will try again next frame
-            self.state = DoctorState.HOLDING
-            self.state_timer = 0
-            return
-        
-        # Close enough - snap to exact touch and start handover
-        assistant._snap_to_exact_touch(self)
-        
-        self.handover_partner = assistant
-        self.state = DoctorState.GIVING
-        assistant.state = AssistantState.RECEIVING
-        assistant.handover_partner = self
-        assistant.is_approaching_for_handover = False
-        assistant.approach_partner = None
-        
-        self.handover_frame_count = 0
-        assistant.handover_frame_count = 0
-        self.state_duration = self.config.handover_duration
-        assistant.state_duration = self.config.handover_duration
-    
-    # -------------------------------------------------------------------------
-    # Handover Approach Movement
-    # -------------------------------------------------------------------------
-    
-    def _set_target_for_exact_touch(self, partner: 'Person'):
-        """Set target position to exactly touch the partner (no overlap)."""
-        dx = partner.position[0] - self.position[0]
-        dy = partner.position[1] - self.position[1]
-        dist = max(0.001, math.sqrt(dx * dx + dy * dy))
-        
-        # Target is at the edge of partner's circle
-        touch_distance = self.radius + partner.radius
-        
-        self.target_position = (
-            partner.position[0] - (dx / dist) * touch_distance,
-            partner.position[1] - (dy / dist) * touch_distance
-        )
-        self.waypoints = []
-    
-    def _snap_to_exact_touch(self, partner: 'Person'):
-        """Snap this person to exactly touch the partner (no overlap)."""
-        dx = partner.position[0] - self.position[0]
-        dy = partner.position[1] - self.position[1]
-        dist = max(0.001, math.sqrt(dx * dx + dy * dy))
-        
-        touch_distance = self.radius + partner.radius
-        
-        # Only adjust if not already at exact touch
-        if abs(dist - touch_distance) > 0.5:
-            self.position = (
-                partner.position[0] - (dx / dist) * touch_distance,
-                partner.position[1] - (dy / dist) * touch_distance
-            )
-    
-    def _move_towards_partner_for_handover(self):
-        """Move directly towards handover partner for clean approach."""
-        if not self.handover_partner:
-            return
-        
-        partner = self.handover_partner
-        dx = partner.position[0] - self.position[0]
-        dy = partner.position[1] - self.position[1]
-        dist = math.sqrt(dx * dx + dy * dy)
-        
-        if dist < 0.001:
-            return
-        
-        touch_distance = self.radius + partner.radius
-        
-        # Calculate how much to move
-        dist_to_touch = dist - touch_distance
-        move_dist = min(self.speed, max(0, dist_to_touch))
-        
-        if move_dist > 0:
-            new_pos = (
-                self.position[0] + (dx / dist) * move_dist,
-                self.position[1] + (dy / dist) * move_dist
-            )
-            new_pos = self._clamp_to_bounds(new_pos)
-            
-            if not self._would_collide_with_obstacles(new_pos):
-                self.position = new_pos
-                self.instrument_attach_angle = math.atan2(dy, dx)
-    
-    # -------------------------------------------------------------------------
-    # Movement
-    # -------------------------------------------------------------------------
-    
-    def _do_idle_movement(self):
-        """Small random movements while idle."""
-        # Don't move during handover
-        if self.is_in_handover():
-            return
-        
-        self.wander_timer -= 1
-        if self.wander_timer <= 0:
-            offset_x = self.rng.uniform(-self.idle_movement_range, self.idle_movement_range)
-            offset_y = self.rng.uniform(-self.idle_movement_range, self.idle_movement_range)
-            target = (self.original_position[0] + offset_x, self.original_position[1] + offset_y)
-            self.target_position = self._clamp_to_bounds(target)
-            self.wander_timer = self.rng.integers(20, 60)
-        
-        self._move_to_target()
-    
-    def _do_minimal_idle_movement(self):
-        """Very small movements while waiting (e.g., waiting by doctor)."""
-        # Don't move during handover
-        if self.is_in_handover():
-            return
-        
-        self.wander_timer -= 1
-        if self.wander_timer <= 0:
-            # Much smaller movement range than normal idle
-            small_range = self.idle_movement_range * 0.5
-            offset_x = self.rng.uniform(-small_range, small_range)
-            offset_y = self.rng.uniform(-small_range, small_range)
-            target = (self.position[0] + offset_x, self.position[1] + offset_y)
-            self.target_position = self._clamp_to_bounds(target)
-            self.wander_timer = self.rng.integers(30, 60)
-        
-        self._move_to_target()
-    
-    def _do_wander_movement(self):
-        """Random wandering movement for inactive persons."""
-        self.wander_timer -= 1
-        if self.wander_timer <= 0 or self.target_position is None:
-            margin = self.radius + 10
-            target = self._find_valid_random_position(margin)
-            self.target_position = target
-            self.waypoints = []
-            self.wander_timer = self.rng.integers(60, 180)
-        
-        self._move_to_target()
-    
-    def _find_valid_random_position(self, margin: float) -> Tuple[float, float]:
-        """Find a valid random position that doesn't collide with obstacles."""
-        for _ in range(20):
-            target_x = self.rng.uniform(margin, self.config.img_size - margin)
-            target_y = self.rng.uniform(margin, self.config.img_size - margin)
-            target = (target_x, target_y)
-            if not self._would_collide_with_obstacles(target):
-                return target
-        return self.position
-    
-    def _move_to_target(self) -> bool:
-        """
-        Move towards target position using A* pathfinding with collision avoidance.
-        
-        Returns:
-            True if target reached, False otherwise
-        """
-        self.frames_since_path_calc += 1
-        if self.oscillation_cooldown > 0:
-            self.oscillation_cooldown -= 1
-        
-        # Check for oscillation
-        self._update_position_history()
-        if self._is_oscillating():
-            self._handle_oscillation()
-            return False
-        
-        if self.target_position is None:
-            self.velocity = (0.0, 0.0)
-            return True
-        
-        # Check if reached target
-        dist_to_target = distance(self.position, self.target_position)
-        if dist_to_target < self.speed * 2:
-            self.position = self.target_position
-            self.waypoints = []
-            self.velocity = (0.0, 0.0)
-            return True
-        
-        # Recalculate path if needed
-        if not self.waypoints and self.pathfinding and self.frames_since_path_calc >= self.min_frames_between_path_calc:
-            path = self.pathfinding.get_path(self.position, self.target_position)
-            if path and len(path) > 1:
-                self.waypoints = path[1:]
-            elif not path:
-                escape_pos = self._find_escape_position()
-                if escape_pos:
-                    self.waypoints = [escape_pos]
-            self.frames_since_path_calc = 0
-        
-        # Determine current waypoint
-        current_waypoint = self.target_position
-        if self.waypoints:
-            current_waypoint = self.waypoints[0]
-            if distance(self.position, current_waypoint) < self.speed * 1.5:
-                self.waypoints.pop(0)
-                current_waypoint = self.waypoints[0] if self.waypoints else self.target_position
-        
-        # Calculate movement direction
-        dx = current_waypoint[0] - self.position[0]
-        dy = current_waypoint[1] - self.position[1]
-        dist = math.sqrt(dx * dx + dy * dy)
-        
-        if dist < 0.001:
-            return False
-        
-        desired_x, desired_y = dx / dist, dy / dist
-        
-        # Get avoidance force (skip during handover approach)
-        if not self.is_approaching_for_handover:
-            avoid_x, avoid_y = self._get_avoidance_force()
-            
-            # Scale avoidance by priority
-            avoidance_strength = max(0.2, 1.0 - (self._get_movement_priority() / 150.0))
-            
-            # Combine direction with avoidance
-            combined_x = desired_x + avoid_x * avoidance_strength * 1.5
-            combined_y = desired_y + avoid_y * avoidance_strength * 1.5
-        else:
-            combined_x = desired_x
-            combined_y = desired_y
-        
-        combined_dist = math.sqrt(combined_x * combined_x + combined_y * combined_y)
-        if combined_dist > 0.001:
-            combined_x /= combined_dist
-            combined_y /= combined_dist
-        
-        # Apply velocity smoothing
-        target_velocity = (combined_x * self.speed, combined_y * self.speed)
-        self.velocity = (
-            self.velocity[0] + (target_velocity[0] - self.velocity[0]) * self.velocity_smoothing,
-            self.velocity[1] + (target_velocity[1] - self.velocity[1]) * self.velocity_smoothing
-        )
-        
-        # Clamp velocity magnitude
-        vel_magnitude = math.sqrt(self.velocity[0]**2 + self.velocity[1]**2)
-        if vel_magnitude > self.speed:
-            self.velocity = (
-                self.velocity[0] / vel_magnitude * self.speed,
-                self.velocity[1] / vel_magnitude * self.speed
-            )
-        
-        # Apply movement
-        next_pos = self._clamp_to_bounds((
-            self.position[0] + self.velocity[0],
-            self.position[1] + self.velocity[1]
-        ))
-        
-        if not self._would_collide_with_obstacles(next_pos):
-            self.position = next_pos
-            self.instrument_attach_angle = math.atan2(self.velocity[1], self.velocity[0])
-            return False
+        if self.use_grid:
+            self.path = []
         else:
             self.waypoints = []
-            self.frames_since_path_calc = self.min_frames_between_path_calc
-            self._try_unstuck_movement()
-        
-        return False
     
-    def _try_unstuck_movement(self) -> bool:
-        """Try to get unstuck by moving in a valid direction."""
-        base_angle = math.atan2(self.velocity[1], self.velocity[0]) if (
-            abs(self.velocity[0]) > 0.001 or abs(self.velocity[1]) > 0.001
-        ) else 0
-        
-        best_pos = None
-        best_score = float('inf')
-        
-        for angle_offset in [0, math.pi/4, -math.pi/4, math.pi/2, -math.pi/2, 
-                             3*math.pi/4, -3*math.pi/4, math.pi]:
-            angle = base_angle + angle_offset
-            test_pos = self._clamp_to_bounds((
-                self.position[0] + self.speed * math.cos(angle),
-                self.position[1] + self.speed * math.sin(angle)
-            ))
-            
-            if not self._would_collide_with_obstacles(test_pos):
-                if self.target_position:
-                    score = distance(test_pos, self.target_position)
-                    if score < best_score:
-                        best_score = score
-                        best_pos = test_pos
-                else:
-                    self.position = test_pos
-                    return True
-        
-        if best_pos:
-            self.position = best_pos
-            return True
-        
-        return False
-    
-    # -------------------------------------------------------------------------
-    # Oscillation Detection
-    # -------------------------------------------------------------------------
-    
-    def _update_position_history(self):
-        """Track recent positions for oscillation detection."""
-        self.position_history.append(self.position)
-        if len(self.position_history) > self.position_history_size:
-            self.position_history.pop(0)
-    
-    def _is_oscillating(self) -> bool:
-        """Detect if the person is oscillating (moving back and forth)."""
-        if len(self.position_history) < self.position_history_size or self.oscillation_cooldown > 0:
-            return False
-        
-        recent = self.position_history[-1]
-        old = self.position_history[0]
-        
-        # Calculate total distance traveled vs displacement
-        total_dist = sum(
-            distance(self.position_history[i-1], self.position_history[i])
-            for i in range(1, len(self.position_history))
-        )
-        displacement = distance(old, recent)
-        
-        # If we moved a lot but didn't get anywhere, we're oscillating
-        return total_dist > self.speed * 8 and displacement < self.speed * 2
-    
-    def _handle_oscillation(self):
-        """Break out of oscillation by making a decisive movement."""
-        self.oscillation_cooldown = 30
-        self.position_history.clear()
-        self.waypoints = []
-        
-        if self.target_position:
-            # Step to the side to break the cycle
-            dx = self.target_position[0] - self.position[0]
-            dy = self.target_position[1] - self.position[1]
-            current_angle = math.atan2(dy, dx)
-            
-            offset_angle = self.rng.uniform(-math.pi/2, math.pi/2)
-            side_angle = current_angle + offset_angle
-            side_pos = self._clamp_to_bounds((
-                self.position[0] + math.cos(side_angle) * self.radius * 2,
-                self.position[1] + math.sin(side_angle) * self.radius * 2
-            ))
-            
-            if not self._would_collide_with_obstacles(side_pos):
-                self.position = side_pos
-        else:
-            # Move in a random valid direction
-            for _ in range(8):
-                angle = self.rng.uniform(0, 2 * math.pi)
-                new_pos = self._clamp_to_bounds((
-                    self.position[0] + math.cos(angle) * self.radius,
-                    self.position[1] + math.sin(angle) * self.radius
-                ))
-                if not self._would_collide_with_obstacles(new_pos):
-                    self.position = new_pos
-                    break
-    
-    # -------------------------------------------------------------------------
-    # Collision Avoidance
-    # -------------------------------------------------------------------------
-    
-    def _get_avoidance_force(self) -> Tuple[float, float]:
-        """Calculate smoothed steering force to avoid other persons."""
-        raw_force_x, raw_force_y = 0.0, 0.0
-        
-        for other in self.all_persons:
-            if other.id == self.id or self._should_skip_avoidance(other):
-                continue
-            
-            dx = self.position[0] - other.position[0]
-            dy = self.position[1] - other.position[1]
-            dist = math.sqrt(dx * dx + dy * dy)
-            
-            if dist < self.avoidance_radius and dist > 0.001:
-                min_separation = self.radius + other.radius
-                overlap_factor = (self.avoidance_radius - dist) / self.avoidance_radius
-                
-                if dist < min_separation * 1.5:
-                    overlap_factor *= 3.0
-                
-                raw_force_x += (dx / dist) * overlap_factor
-                raw_force_y += (dy / dist) * overlap_factor
-        
-        # Smooth the avoidance force
-        self.smoothed_avoidance = (
-            self.smoothed_avoidance[0] + (raw_force_x - self.smoothed_avoidance[0]) * self.avoidance_smoothing,
-            self.smoothed_avoidance[1] + (raw_force_y - self.smoothed_avoidance[1]) * self.avoidance_smoothing
-        )
-        
-        return self.smoothed_avoidance
-    
-    def _should_skip_avoidance(self, other: 'Person') -> bool:
-        """Check if we should skip collision avoidance with another person."""
-        # Skip if this is our handover partner (either direction)
-        if self.handover_partner is not None and self.handover_partner.id == other.id:
-            return True
-        if other.handover_partner is not None and other.handover_partner.id == self.id:
-            return True
-        
-        # Skip if we're approaching this person for handover
-        if self.is_approaching_for_handover and self.approach_partner is not None:
-            if self.approach_partner.id == other.id:
-                return True
-        
-        # Skip if other person is approaching us for handover
-        if other.is_approaching_for_handover and other.approach_partner is not None:
-            if other.approach_partner.id == self.id:
-                return True
-        
-        return False
-    
-    def _get_movement_priority(self) -> int:
-        """Get movement priority. Higher priority persons are avoided by lower priority ones."""
-        if self.is_in_handover():
-            return 100
-        
-        if self.person_type == PersonType.ASSISTANT:
-            if self.state == AssistantState.MOVING_TO_DOCTOR:
-                return 90
-            if self.state == AssistantState.WAITING_BY_DOCTOR:
-                return 85
-        
-        if self.person_type == PersonType.DOCTOR:
-            if self.state == DoctorState.WORKING:
-                return 80
-            if self.is_active:
-                return 60
-        
-        if self.is_active:
-            return 50
-        
-        return 10
-    
-    # -------------------------------------------------------------------------
-    # Collision Detection
-    # -------------------------------------------------------------------------
-    
-    def _would_collide_with_obstacles(self, position: Tuple[float, float]) -> bool:
-        """Check if position would cause collision with obstacles."""
-        all_obstacles = self.obstacles.copy()
-        if self.patient_table:
-            all_obstacles.append(self.patient_table)
-        if self.preparation_table:
-            all_obstacles.append(self.preparation_table)
-        
-        for obs in all_obstacles:
-            if circle_rect_collision(position, self.radius + 2, obs.rect):
-                return True
-        
-        if self.pathfinding and not self.pathfinding.is_walkable(position):
-            return True
-        
-        return False
-    
-    def _find_escape_position(self) -> Optional[Tuple[float, float]]:
-        """Find a nearby walkable position when stuck."""
-        for radius in range(1, 15):
-            dist = radius * self.speed * 2
-            for angle_step in range(8 * radius):
-                angle = (angle_step / (8 * radius)) * 2 * math.pi
-                test_pos = self._clamp_to_bounds((
-                    self.position[0] + dist * math.cos(angle),
-                    self.position[1] + dist * math.sin(angle)
-                ))
-                
-                if not self._would_collide_with_obstacles(test_pos):
-                    if self.pathfinding is None or self.pathfinding.is_walkable(test_pos):
-                        return test_pos
-        
-        return None
-    
-    def _clamp_to_bounds(self, position: Tuple[float, float]) -> Tuple[float, float]:
-        """Clamp position to scene bounds."""
-        margin = self.radius + 5
-        return (
-            clamp(position[0], margin, self.config.img_size - margin),
-            clamp(position[1], margin, self.config.img_size - margin)
-        )
-    
-    # -------------------------------------------------------------------------
-    # Target Setting
-    # -------------------------------------------------------------------------
-    
-    def _set_target_near_prep_table(self):
-        """Set target to a position near the preparation table."""
-        if self.preparation_table:
-            # Choose a side that's NOT against the scene edge
-            valid_sides = self._get_valid_sides_for_table(self.preparation_table)
-            if valid_sides:
-                side = self.rng.choice(valid_sides)
-            else:
-                side = 'top'  # Fallback
-            
-            self.target_position = find_position_near_rect(
-                self.preparation_table.rect, side, self.radius + 10,
-                (0, 0, self.config.img_size, self.config.img_size),
-                self.obstacles, self.radius)
-            
-            # Verify target is walkable, if not try other sides
-            if self.target_position:
-                if self._would_collide_with_obstacles(self.target_position):
-                    for fallback_side in valid_sides:
-                        if fallback_side != side:
-                            self.target_position = find_position_near_rect(
-                                self.preparation_table.rect, fallback_side, self.radius + 10,
-                                (0, 0, self.config.img_size, self.config.img_size),
-                                self.obstacles, self.radius)
-                            if self.target_position and not self._would_collide_with_obstacles(self.target_position):
-                                break
-            
-            if self.target_position:
-                self.original_position = self.target_position
-            self.waypoints = []
-    
-    def _set_target_near_patient_table(self):
-        """Set target to a position near the patient table."""
-        if self.patient_table:
-            # Choose a side that's NOT against the scene edge
-            valid_sides = self._get_valid_sides_for_table(self.patient_table)
-            if valid_sides:
-                side = self.rng.choice(valid_sides)
-            else:
-                side = 'top'  # Fallback
-            
-            self.target_position = find_position_near_rect(
-                self.patient_table.rect, side, self.radius + 15,
-                (0, 0, self.config.img_size, self.config.img_size),
-                self.obstacles, self.radius)
-            
-            # Verify target is walkable, if not try other sides
-            if self.target_position:
-                if self._would_collide_with_obstacles(self.target_position):
-                    for fallback_side in valid_sides:
-                        if fallback_side != side:
-                            self.target_position = find_position_near_rect(
-                                self.patient_table.rect, fallback_side, self.radius + 15,
-                                (0, 0, self.config.img_size, self.config.img_size),
-                                self.obstacles, self.radius)
-                            if self.target_position and not self._would_collide_with_obstacles(self.target_position):
-                                break
-            
-            if self.target_position:
-                self.original_position = self.target_position
-            self.waypoints = []
-    
-    def _get_valid_sides_for_table(self, table) -> List[str]:
-        """
-        Determine which sides of a table are accessible (not against scene boundary).
-        
-        When tables are placed on edges, one side will be against the wall and
-        inaccessible. This method returns only the sides where a person can stand.
-        """
-        margin = self.radius + 25  # Need enough space to stand
-        valid_sides = []
-        
-        # Get table bounds
-        tx, ty, tw, th = table.rect
-        
-        if tx <= tw:
-            return ["right"]
-        
-        if ty <= th:
-            return ["bottom"]
-        
-        if tx >= self.config.img_size - tw:
-            return ["left"]
-        
-        if ty >= self.config.img_size - th:
-            return ["top"]
-        
-        # Fallback: if somehow no sides are valid, return all (shouldn't happen)
-        valid_sides = ['left', 'right', 'top', 'bottom']
-        return valid_sides
-    
-    def _set_target_near_person(self, other: 'Person'):
-        """Set target to move next to another person (with some distance)."""
-        dx = other.position[0] - self.position[0]
-        dy = other.position[1] - self.position[1]
-        dist = max(1, math.sqrt(dx*dx + dy*dy))
-        
-        # Keep some distance when not doing handover
-        offset = self.radius + other.radius + self.radius * 0.8
-        
-        self.target_position = self._clamp_to_bounds((
-            other.position[0] - (dx / dist) * offset,
-            other.position[1] - (dy / dist) * offset
-        ))
-        self.waypoints = []
-    
-    # -------------------------------------------------------------------------
-    # Instrument Handling
-    # -------------------------------------------------------------------------
-    
-    def _pick_up_instrument(self, available: List['Instrument']) -> Optional['Instrument']:
-        """Pick up an instrument from the preparation table."""
-        for instrument in available:
-            if instrument.state.name == 'ON_TABLE' and instrument.holder is None:
-                instrument.attach_to(self)
-                self.held_instrument = instrument
-                return instrument
-        return None
-    
-    def _lay_down_instrument(self) -> None:
-        """Put an instrument back on the preparation table."""
-        if self.held_instrument is not None:
-            self.held_instrument.detach()
-            self.held_instrument = None
-    
-    def _complete_handover_give(self):
-        """Complete giving an instrument to partner."""
+    def _complete_give_to_doctor(self):
+        """Complete giving instrument to doctor."""
         if self.held_instrument and self.handover_partner:
             instrument = self.held_instrument
             partner = self.handover_partner
@@ -1330,57 +897,101 @@ class Person:
             instrument.complete_handover(partner)
             partner.held_instrument = instrument
             
-            if self.person_type == PersonType.ASSISTANT:
-                # Assistant gave to doctor
-                self.state = AssistantState.WAITING_BY_DOCTOR
-                self.original_position = self.position
-                partner.handover_partner = None
-                partner.state = DoctorState.HOLDING
-                partner.state_timer = 0
-                
-                # Start separation for both
-                self._start_separation(partner)
-                partner._start_separation(self)
+            self.state = AssistantState.WAITING_BY_DOCTOR
+            if self.use_grid:
+                self._home_pos = self._grid_pos
             else:
-                # Doctor gave to assistant
-                self.state = DoctorState.IDLE
-                partner.handover_partner = None
-                partner.state = AssistantState.HOLDING
-                partner.transition_pause = 0  # Don't pause, start separating instead
-                
-                # Start separation for both
-                self._start_separation(partner)
-                partner._start_separation(self)
-                
-                self.handover_partner = None
+                self._original_pos = self._continuous_pos
+            
+            partner.state = DoctorState.HOLDING
+            partner.state_timer = 0
+            partner.handover_partner = None
+            
+            self._start_separation(partner)
+            partner._start_separation(self)
     
-    def _complete_handover_receive(self):
-        """Complete receiving an instrument from partner."""
-        if self.person_type == PersonType.ASSISTANT:
+    def _complete_receive_from_doctor(self):
+        """Complete receiving instrument from doctor."""
+        if self.handover_partner and self.handover_partner.held_instrument:
+            instrument = self.handover_partner.held_instrument
             partner = self.handover_partner
+            
+            partner.held_instrument = None
+            instrument.complete_handover(self)
+            self.held_instrument = instrument
             
             self.state = AssistantState.MOVING_FROM_DOCTOR
             self._set_target_near_prep_table()
+            self.move_timeout = 0
             
-            # Start separation
-            if partner:
-                self._start_separation(partner)
+            partner.state = DoctorState.IDLE
+            partner.handover_partner = None
+            
+            self._start_separation(partner)
+            partner._start_separation(self)
             
             self.handover_partner = None
+    
+    def _start_giving_to_assistant(self, assistant: 'Person'):
+        """Start returning instrument to assistant."""
+        if not self._is_adjacent_to(assistant):
+            assistant.handover_partner = self
+            assistant.state = AssistantState.MOVING_TO_DOCTOR
+            self.state = DoctorState.HOLDING
+            self.state_timer = 0
+            return
+        
+        self.handover_partner = assistant
+        assistant.handover_partner = self
+        
+        self.state = DoctorState.GIVING
+        assistant.state = AssistantState.RECEIVING
+        
+        self.state_timer = 0
+        assistant.state_timer = 0
+        self.state_duration = self.config.handover_duration
+        assistant.state_duration = self.config.handover_duration
+    
+    def _reset_to_idle(self):
+        """Reset to idle state."""
+        self.state = AssistantState.IDLE
+        self.state_timer = 0
+        self.handover_partner = None
+        self.move_timeout = 0
+        if self.use_grid:
+            self.path = []
+        else:
+            self.waypoints = []
+    
+    # -------------------------------------------------------------------------
+    # Instrument Handling
+    # -------------------------------------------------------------------------
+    
+    def _pick_up_instrument(self, available: List['Instrument']) -> Optional['Instrument']:
+        """Pick up an instrument."""
+        for instrument in available:
+            if instrument.state.name == 'ON_TABLE' and instrument.holder is None:
+                instrument.attach_to(self)
+                self.held_instrument = instrument
+                return instrument
+        return None
+    
+    def _lay_down_instrument(self):
+        """Put down held instrument."""
+        if self.held_instrument:
+            self.held_instrument.detach()
+            self.held_instrument = None
     
     # -------------------------------------------------------------------------
     # Public Interface
     # -------------------------------------------------------------------------
     
     def get_instrument_attach_point(self) -> Tuple[float, float]:
-        """Get the point on the circle edge where instrument attaches."""
-        return (
-            self.position[0],# + self.radius * math.cos(self.instrument_attach_angle),
-            self.position[1]# + self.radius * math.sin(self.instrument_attach_angle)
-        )
+        """Get pixel position for instrument attachment."""
+        return self.position
     
     def get_current_action(self) -> Optional[ActionLabel]:
-        """Get the current action label for YOLO annotation."""
+        """Get current action label for annotation."""
         if self.person_type == PersonType.ASSISTANT:
             if self.state == AssistantState.PREPARING:
                 return ActionLabel.ASSISTANT_PREPARES
@@ -1400,13 +1011,14 @@ class Person:
         return None
     
     def is_in_handover(self) -> bool:
-        """Check if person is currently in a handover action."""
+        """Check if currently in handover."""
         if self.person_type == PersonType.ASSISTANT:
             return self.state in [AssistantState.GIVING, AssistantState.RECEIVING]
         else:
             return self.state in [DoctorState.GIVING, DoctorState.RECEIVING]
     
     def get_bounding_box(self, img_size: int) -> Tuple[float, float, float, float]:
-        """Get normalized bounding box for this person."""
-        bbox = get_bounding_box(self.position, self.radius)
-        return normalize_bbox(bbox, img_size)
+        """Get normalized bounding box."""
+        x, y = self.position
+        r = self.radius
+        return (x / img_size, y / img_size, (2 * r) / img_size, (2 * r) / img_size)

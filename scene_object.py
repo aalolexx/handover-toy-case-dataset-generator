@@ -1,5 +1,6 @@
 """
 Scene objects like tables and random medical equipment.
+Supports both grid-aligned and continuous positioning.
 """
 from typing import Tuple
 from dataclasses import dataclass
@@ -26,7 +27,6 @@ class SceneObject:
     def center(self) -> Tuple[float, float]:
         """Get center point."""
         return (self.x + self.width / 2, self.y + self.height / 2)
-    
 
     @property
     def position(self):
@@ -42,52 +42,79 @@ class SceneObject:
         return (self.x <= px <= self.x + self.width and
                 self.y <= py <= self.y + self.height)
     
-    def get_random_position(self, image_size, avoid_points: list = None, avoid_radius: float = 90.0) -> Tuple[float, float]:
-        """Get a random position within the object."""
-        rx = int(random.uniform(self.x + avoid_radius, self.x + image_size - avoid_radius))
-        ry = int(random.uniform(self.y + avoid_radius, self.y + image_size - avoid_radius))
-        if (avoid_points is not None and
-            rx > avoid_points[0] and rx < avoid_points[0] + avoid_radius and
-            ry > avoid_points[1] and ry < avoid_points[1] + avoid_radius):
-            return self.get_random_position(image_size, avoid_points, avoid_radius)
-        return (rx, ry)
-    
-    def position_on_edge(self, edge: str, image_size: int, margin: float = 0.0) -> Tuple[int, int]:
+    def position_on_edge(self, edge: str, image_size: int, margin: float = 10.0, 
+                          use_grid: bool = False, grid_size: int = 16) -> Tuple[int, int]:
         """
         Position this object along a specific edge of the scene.
         
         Args:
             edge: One of 'top', 'bottom', 'left', 'right'
             image_size: Size of the scene (assumes square)
-            margin: Margin from the edge
+            margin: Margin from the edge (only used in continuous mode)
+            use_grid: If True, snap to grid cells
+            grid_size: Number of grid cells (only used if use_grid=True)
             
         Returns:
             The (x, y) position for the top-left corner of the object
         """
+        if use_grid:
+            return self._position_on_edge_grid(edge, image_size, grid_size)
+        else:
+            return self._position_on_edge_continuous(edge, image_size, margin)
+    
+    def _position_on_edge_grid(self, edge: str, image_size: int, grid_size: int) -> Tuple[int, int]:
+        """Position on edge with grid alignment."""
+        cell_size = image_size // grid_size
+        
+        # Snap dimensions to grid
+        width_cells = max(1, (self.width + cell_size - 1) // cell_size)
+        height_cells = max(1, (self.height + cell_size - 1) // cell_size)
+        self.width = width_cells * cell_size
+        self.height = height_cells * cell_size
+        
         if edge == 'top':
-            # Along top edge, random x position
-            x = image_size // 2#random.randint(int(margin), int(image_size - self.width - margin))
+            max_col = grid_size - width_cells
+            col = random.randint(0, max(0, max_col))
+            row = 0
+        elif edge == 'bottom':
+            max_col = grid_size - width_cells
+            col = random.randint(0, max(0, max_col))
+            row = grid_size - height_cells
+        elif edge == 'left':
+            max_row = grid_size - height_cells
+            col = 0
+            row = random.randint(0, max(0, max_row))
+        elif edge == 'right':
+            max_row = grid_size - height_cells
+            col = grid_size - width_cells
+            row = random.randint(0, max(0, max_row))
+        else:
+            raise ValueError(f"Invalid edge: {edge}")
+        
+        return (col * cell_size, row * cell_size)
+    
+    def _position_on_edge_continuous(self, edge: str, image_size: int, margin: float) -> Tuple[int, int]:
+        """Position on edge with continuous coordinates."""
+        if edge == 'top':
+            x = random.randint(int(margin), int(image_size - self.width - margin))
             y = int(margin)
         elif edge == 'bottom':
-            # Along bottom edge, random x position
-            x = image_size // 2#random.randint(int(margin), int(image_size - self.width - margin))
+            x = random.randint(int(margin), int(image_size - self.width - margin))
             y = int(image_size - self.height - margin)
         elif edge == 'left':
-            # Along left edge, random y position
             x = int(margin)
-            y = image_size // 2#random.randint(int(margin), int(image_size - self.height - margin))
+            y = random.randint(int(margin), int(image_size - self.height - margin))
         elif edge == 'right':
-            # Along right edge, random y position
             x = int(image_size - self.width - margin)
-            y = image_size // 2#random.randint(int(margin), int(image_size - self.height - margin))
+            y = random.randint(int(margin), int(image_size - self.height - margin))
         else:
-            raise ValueError(f"Invalid edge: {edge}. Must be 'top', 'bottom', 'left', or 'right'")
+            raise ValueError(f"Invalid edge: {edge}")
         
         return (x, y)
 
 
 class PatientTable(SceneObject):
-    """The patient/operation table in the center of the scene."""
+    """The patient/operation table."""
     
     def __init__(self, x: int, y: int, width: int, height: int,
                  color: Tuple[int, int, int]):
@@ -100,31 +127,44 @@ class PreparationTable(SceneObject):
     def __init__(self, x: int, y: int, width: int, height: int,
                  color: Tuple[int, int, int]):
         super().__init__(x, y, width, height, color, "preparation_table")
-        self.instrument_positions: list = []  # Positions for instruments on table
+        self.instrument_positions: list = []
         self._init_instrument_positions()
     
-    def _init_instrument_positions(self):
-        """Initialize positions where instruments can be placed on the table."""
-        # Create a grid of positions on the table
-        num_cols = max(1, self.width // 30)
-        num_rows = max(1, self.height // 30)
+    def _init_instrument_positions(self, use_grid: bool = False, 
+                                    grid_size: int = 16, img_size: int = 224):
+        """Initialize positions where instruments can be placed."""
+        self.instrument_positions = []
         
-        margin_x = 15
-        margin_y = 10
-        
-        self.instrument_positions = []  # Reset positions
-        
-        for row in range(num_rows):
-            for col in range(num_cols):
-                if num_cols > 1:
-                    x = self.x + margin_x + col * (self.width - 2 * margin_x) / (num_cols - 1)
-                else:
-                    x = self.x + self.width / 2
-                if num_rows > 1:
-                    y = self.y + margin_y + row * (self.height - 2 * margin_y) / (num_rows - 1)
-                else:
-                    y = self.y + self.height / 2
-                self.instrument_positions.append((x, y))
+        if use_grid:
+            cell_size = img_size // grid_size
+            start_col = self.x // cell_size
+            start_row = self.y // cell_size
+            width_cells = max(1, self.width // cell_size)
+            height_cells = max(1, self.height // cell_size)
+            
+            for row_offset in range(height_cells):
+                for col_offset in range(width_cells):
+                    x = (start_col + col_offset) * cell_size + cell_size / 2
+                    y = (start_row + row_offset) * cell_size + cell_size / 2
+                    self.instrument_positions.append((x, y))
+        else:
+            # Continuous mode - grid of positions within table
+            num_cols = max(1, self.width // 30)
+            num_rows = max(1, self.height // 30)
+            margin_x = 15
+            margin_y = 10
+            
+            for row in range(num_rows):
+                for col in range(num_cols):
+                    if num_cols > 1:
+                        x = self.x + margin_x + col * (self.width - 2 * margin_x) / (num_cols - 1)
+                    else:
+                        x = self.x + self.width / 2
+                    if num_rows > 1:
+                        y = self.y + margin_y + row * (self.height - 2 * margin_y) / (num_rows - 1)
+                    else:
+                        y = self.y + self.height / 2
+                    self.instrument_positions.append((x, y))
     
     def get_instrument_position(self, index: int) -> Tuple[float, float]:
         """Get a position for placing an instrument."""
@@ -143,7 +183,7 @@ class RandomMedicalObject(SceneObject):
 
 
 class OcclusionObject(SceneObject):
-    """Rectangle occluding the scene simulating camera errors or general occlusions."""
+    """Rectangle occluding the scene."""
 
     def __init__(self, x: int, y: int, width: int, height: int,
                  color: Tuple[int, int, int], obj_id: int):
