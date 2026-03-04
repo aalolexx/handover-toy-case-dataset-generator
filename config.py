@@ -61,7 +61,7 @@ class Config:
     prepare_duration_avg: int = 20
     work_duration_avg: int = 25
     hold_duration_avg: int = 8
-    handover_duration: int = 5
+    handover_duration: int = 2
     allow_handover_overlap: bool = False 
     person_avoidance_radius_multiplier: float = 4.0
     person_separation_buffer: float = 2.0
@@ -76,6 +76,8 @@ class Config:
     
     # Output settings
     output_dir: str = "output"
+    export_ascii: bool = True
+    export_json: bool = True
     
     @property
     def cell_size(self) -> int:

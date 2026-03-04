@@ -696,6 +696,15 @@ class Person:
         
         elif state == AssistantState.GIVING:
             self.state_timer += 1
+            
+            # Transfer instrument after first frame (timer == 1)
+            if self.state_timer == 1 and self.held_instrument and self.handover_partner:
+                instrument = self.held_instrument
+                self.held_instrument = None
+                instrument.complete_handover(self.handover_partner)
+                self.handover_partner.held_instrument = instrument
+            
+            # Complete handover after second frame (timer >= 2)
             if self.state_timer >= self.state_duration:
                 self._complete_give_to_doctor()
         
@@ -716,6 +725,15 @@ class Person:
         
         elif state == AssistantState.RECEIVING:
             self.state_timer += 1
+            
+            # Transfer instrument after first frame (timer == 1)
+            if self.state_timer == 1 and self.handover_partner and self.handover_partner.held_instrument:
+                instrument = self.handover_partner.held_instrument
+                self.handover_partner.held_instrument = None
+                instrument.complete_handover(self)
+                self.held_instrument = instrument
+            
+            # Complete handover after second frame (timer >= 2)
             if self.state_timer >= self.state_duration:
                 self._complete_receive_from_doctor()
         
@@ -888,45 +906,41 @@ class Person:
             self.waypoints = []
     
     def _complete_give_to_doctor(self):
-        """Complete giving instrument to doctor."""
-        if self.held_instrument and self.handover_partner:
-            instrument = self.held_instrument
+        """Complete giving - handle state transitions (instrument already transferred)."""
+        if self.handover_partner:
             partner = self.handover_partner
             
-            self.held_instrument = None
-            instrument.complete_handover(partner)
-            partner.held_instrument = instrument
-            
+            # Assistant waits by doctor
             self.state = AssistantState.WAITING_BY_DOCTOR
             if self.use_grid:
                 self._home_pos = self._grid_pos
             else:
                 self._original_pos = self._continuous_pos
             
+            # Doctor transitions to holding
             partner.state = DoctorState.HOLDING
             partner.state_timer = 0
             partner.handover_partner = None
             
+            # Separation
             self._start_separation(partner)
             partner._start_separation(self)
     
     def _complete_receive_from_doctor(self):
-        """Complete receiving instrument from doctor."""
-        if self.handover_partner and self.handover_partner.held_instrument:
-            instrument = self.handover_partner.held_instrument
+        """Complete receiving - handle state transitions (instrument already transferred)."""
+        if self.handover_partner:
             partner = self.handover_partner
             
-            partner.held_instrument = None
-            instrument.complete_handover(self)
-            self.held_instrument = instrument
-            
+            # Assistant moves back to prep table
             self.state = AssistantState.MOVING_FROM_DOCTOR
             self._set_target_near_prep_table()
             self.move_timeout = 0
             
+            # Doctor goes idle
             partner.state = DoctorState.IDLE
             partner.handover_partner = None
             
+            # Separation
             self._start_separation(partner)
             partner._start_separation(self)
             

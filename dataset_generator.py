@@ -11,6 +11,7 @@ from config import Config
 from process_manager import ProcessManager
 from render_manager import RenderManager
 from annotation_manager import AnnotationManager
+from exporter import create_exporter
 
 
 class DatasetGenerator:
@@ -59,6 +60,9 @@ class DatasetGenerator:
         
         print(f"Generating {self.config.total_num_frames} frames and {self.config.num_seperated_videos} videos/sequences...")
         
+        # Also export Ascii and JSON (if required)
+        exporter = create_exporter(self.config, self.output_dir)
+
         # Determine train/val split
         train_frames = int(self.config.total_num_frames * 0.8)
         
@@ -91,6 +95,9 @@ class DatasetGenerator:
                 state['occlusion_objects']
             )
             
+            # Also export json and ascii
+            exporter.export_frame(self.process_manager, frame_num)
+
             # Generate annotations
             annotations = self.annotation_manager.generate_annotations(
                 frame_num, state['persons'])
