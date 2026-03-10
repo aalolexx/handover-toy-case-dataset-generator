@@ -73,6 +73,7 @@ class Person:
         
         # Handover coordination
         self.handover_partner: Optional['Person'] = None
+        self.is_fake_handover: bool = False  # True if current handover is between same-color actors
         
         # References (set by ProcessManager)
         self.grid: Optional['GridManager'] = None
@@ -615,11 +616,9 @@ class Person:
                     self.state = AssistantState.MOVING_TO_PREP_TABLE
                     self.move_timeout = 0
                 elif self.held_instrument:
-                    doctor = self._find_available_doctor(active_doctors)
-                    if doctor:
-                        self.handover_partner = doctor
-                        self.state = AssistantState.MOVING_TO_DOCTOR
-                        self.move_timeout = 0
+                    # Go through HOLDING state (where fake handover logic lives)
+                    self.state = AssistantState.HOLDING
+                    self.state_timer = 0
         
         elif state == AssistantState.MOVING_TO_PREP_TABLE:
             self.move_timeout += 1
@@ -646,13 +645,9 @@ class Person:
                 if self.held_instrument is None:
                     instrument = self._pick_up_instrument(available_instruments)
                     if instrument:
-                        doctor = self._find_available_doctor(active_doctors)
-                        if doctor:
-                            self.handover_partner = doctor
-                            self.state = AssistantState.MOVING_TO_DOCTOR
-                        else:
-                            self.state = AssistantState.HOLDING
-                            self.state_timer = 0
+                        # Always go to HOLDING first, then decide next action
+                        self.state = AssistantState.HOLDING
+                        self.state_timer = 0
                     else:
                         self._reset_to_idle()
                 else:
@@ -663,13 +658,33 @@ class Person:
             self._do_idle_movement()
             self.state_timer += 1
             
-            if self.state_timer % 10 == 0:
-                doctor = self._find_available_doctor(active_doctors)
-                if doctor:
-                    self.handover_partner = doctor
-                    self.state = AssistantState.MOVING_TO_DOCTOR
-                    self.state_timer = 0
+            # Decide: try fake handover OR real handover
+            if self.config.enable_fake_handovers and self.held_instrument:
+                if self.rng.random() < self.config.fake_handover_prob:
+                    # Try fake handover (green-to-green)
+                    partner = self._find_same_color_partner_for_fake_handover()
+                    if partner:
+                        if self._is_adjacent_to(partner):
+                            self._start_fake_handover(partner)
+                            return
+                        else:
+                            # Move toward fake partner (reuse MOVING_TO_DOCTOR state)
+                            self.handover_partner = partner
+                            self.is_fake_handover = True
+                            self.state = AssistantState.MOVING_TO_DOCTOR
+                            self.state_timer = 0
+                            return
             
+            # Try real handover (green-to-blue)
+            doctor = self._find_available_doctor(active_doctors)
+            if doctor:
+                self.handover_partner = doctor
+                self.is_fake_handover = False
+                self.state = AssistantState.MOVING_TO_DOCTOR
+                self.state_timer = 0
+                return
+            
+            # If stuck too long, put instrument back
             if self.state_timer > 150:
                 self._set_target_near_prep_table()
                 self.state = AssistantState.MOVING_TO_PREP_TABLE
@@ -680,18 +695,30 @@ class Person:
             
             if self.handover_partner:
                 if self._is_adjacent_to(self.handover_partner):
-                    if self._can_start_handover():
-                        self._start_giving_handover()
+                    if self.is_fake_handover:
+                        # Fake handover with same-color partner
+                        if self._can_start_fake_handover():
+                            self._start_fake_handover(self.handover_partner)
+                        else:
+                            self.state = AssistantState.HOLDING
+                            self.handover_partner = None
+                            self.is_fake_handover = False
+                            self.state_timer = 0
                     else:
-                        self.state = AssistantState.HOLDING
-                        self.handover_partner = None
-                        self.state_timer = 0
+                        # Real handover with doctor
+                        if self._can_start_handover():
+                            self._start_giving_handover()
+                        else:
+                            self.state = AssistantState.HOLDING
+                            self.handover_partner = None
+                            self.state_timer = 0
                 else:
                     self._move_towards_person(self.handover_partner)
             
             if self.move_timeout > self.max_move_timeout:
                 self.state = AssistantState.HOLDING
                 self.handover_partner = None
+                self.is_fake_handover = False
                 self.state_timer = 0
         
         elif state == AssistantState.GIVING:
@@ -777,6 +804,15 @@ class Person:
             self._do_idle_movement()
             self.state_timer += 1
             
+            # Check for fake handover opportunity (blue-to-blue)
+            if (self.config.enable_fake_handovers and 
+                self.held_instrument and
+                self.rng.random() < self.config.fake_handover_prob):
+                partner = self._find_same_color_partner_for_fake_handover()
+                if partner and self._is_adjacent_to(partner):
+                    self._start_fake_handover(partner)
+                    return
+            
             if self.state_timer > self.rng.integers(5, 20):
                 self.state = DoctorState.WORKING
                 self.state_timer = 0
@@ -802,6 +838,35 @@ class Person:
         
         elif state == DoctorState.GIVING:
             self.state_timer += 1
+            
+            # For fake handovers (blue-to-blue), handle transfer here
+            if self.is_fake_handover:
+                # Transfer instrument after first frame (timer == 1)
+                if self.state_timer == 1 and self.held_instrument and self.handover_partner:
+                    instrument = self.held_instrument
+                    self.held_instrument = None
+                    instrument.complete_handover(self.handover_partner)
+                    self.handover_partner.held_instrument = instrument
+                
+                # Complete fake handover after second frame
+                if self.state_timer >= self.state_duration:
+                    if self.handover_partner:
+                        partner = self.handover_partner
+                        
+                        # Giver goes to IDLE, receiver goes to HOLDING
+                        self.state = DoctorState.IDLE
+                        partner.state = DoctorState.HOLDING
+                        partner.state_timer = 0
+                        
+                        # Clear handover state
+                        self.handover_partner = None
+                        partner.handover_partner = None
+                        self.is_fake_handover = False
+                        partner.is_fake_handover = False
+                        
+                        # Separation
+                        self._start_separation(partner)
+                        partner._start_separation(self)
     
     # -------------------------------------------------------------------------
     # Helper Methods
@@ -875,8 +940,56 @@ class Person:
         
         return None
     
+    def _find_same_color_partner_for_fake_handover(self) -> Optional['Person']:
+        """Find a same-color actor available for fake handover."""
+        for person in self.all_persons:
+            if person.id == self.id:
+                continue
+            if person.person_type != self.person_type:
+                continue
+            if person.held_instrument is not None:
+                continue
+            if person._is_separating():
+                continue
+            
+            # Check if in a compatible state
+            if self.person_type == PersonType.ASSISTANT:
+                if person.state not in [AssistantState.IDLE, AssistantState.HOLDING]:
+                    continue
+            else:
+                if person.state not in [DoctorState.IDLE, DoctorState.HOLDING]:
+                    continue
+            
+            # Check if already in a handover
+            if person.handover_partner is not None:
+                continue
+            
+            return person
+        
+        return None
+    
+    def _start_fake_handover(self, partner: 'Person'):
+        """Start a fake handover with a same-color actor."""
+        self.handover_partner = partner
+        partner.handover_partner = self
+        self.is_fake_handover = True
+        partner.is_fake_handover = True
+        
+        # Set both to GIVING/RECEIVING states
+        if self.person_type == PersonType.ASSISTANT:
+            self.state = AssistantState.GIVING
+            partner.state = AssistantState.RECEIVING
+        else:
+            self.state = DoctorState.GIVING
+            partner.state = DoctorState.RECEIVING
+        
+        self.state_timer = 0
+        partner.state_timer = 0
+        self.state_duration = self.config.handover_duration
+        partner.state_duration = self.config.handover_duration
+    
     def _can_start_handover(self) -> bool:
-        """Check if handover can start."""
+        """Check if handover can start (real handover to doctor)."""
         if not self.handover_partner:
             return False
         if self.handover_partner.held_instrument is not None:
@@ -885,6 +998,25 @@ class Person:
             return False
         if self.handover_partner._is_separating():
             return False
+        return True
+    
+    def _can_start_fake_handover(self) -> bool:
+        """Check if fake handover can start (same-color partner)."""
+        if not self.handover_partner:
+            return False
+        if self.handover_partner.held_instrument is not None:
+            return False
+        if self.handover_partner._is_separating():
+            return False
+        if self.handover_partner.handover_partner is not None:
+            return False
+        # Check partner is in compatible state for their type
+        if self.handover_partner.person_type == PersonType.ASSISTANT:
+            if self.handover_partner.state not in [AssistantState.IDLE, AssistantState.HOLDING]:
+                return False
+        else:
+            if self.handover_partner.state not in [DoctorState.IDLE, DoctorState.HOLDING]:
+                return False
         return True
     
     def _start_giving_handover(self):
@@ -910,21 +1042,37 @@ class Person:
         if self.handover_partner:
             partner = self.handover_partner
             
-            # Assistant waits by doctor
-            self.state = AssistantState.WAITING_BY_DOCTOR
-            if self.use_grid:
-                self._home_pos = self._grid_pos
+            if self.is_fake_handover:
+                # Fake handover: giver goes to IDLE, receiver goes to HOLDING
+                self.state = AssistantState.IDLE
+                partner.state = AssistantState.HOLDING
+                partner.state_timer = 0
+                
+                # Clear handover state
+                self.handover_partner = None
+                partner.handover_partner = None
+                self.is_fake_handover = False
+                partner.is_fake_handover = False
+                
+                # Separation
+                self._start_separation(partner)
+                partner._start_separation(self)
             else:
-                self._original_pos = self._continuous_pos
-            
-            # Doctor transitions to holding
-            partner.state = DoctorState.HOLDING
-            partner.state_timer = 0
-            partner.handover_partner = None
-            
-            # Separation
-            self._start_separation(partner)
-            partner._start_separation(self)
+                # Normal handover: Assistant waits by doctor
+                self.state = AssistantState.WAITING_BY_DOCTOR
+                if self.use_grid:
+                    self._home_pos = self._grid_pos
+                else:
+                    self._original_pos = self._continuous_pos
+                
+                # Doctor transitions to holding
+                partner.state = DoctorState.HOLDING
+                partner.state_timer = 0
+                partner.handover_partner = None
+                
+                # Separation
+                self._start_separation(partner)
+                partner._start_separation(self)
     
     def _complete_receive_from_doctor(self):
         """Complete receiving - handle state transitions (instrument already transferred)."""

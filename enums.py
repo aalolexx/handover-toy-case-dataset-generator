@@ -42,6 +42,7 @@ class InstrumentState(Enum):
 
 class ActionLabel(Enum):
     """YOLO action labels."""
+    NONE = auto()
     ASSISTANT_PREPARES = 0
     DOCTOR_WORKS = 1
     PERSON_HOLDS = 2

@@ -36,11 +36,10 @@ class SceneExporter:
     def export_frame(self, process_manager: 'ProcessManager', frame_number: int):
         """Export a single frame in all enabled formats."""
         # Always export JSON
-        if self.config.export_json:
-            self.export_json_frame(process_manager, frame_number)
+        self.export_json_frame(process_manager, frame_number)
         
         # Export ASCII only if grid mode is enabled
-        if self.config.use_grid_movement and self.config.export_ascii:
+        if self.config.use_grid_movement:
             self.export_ascii_frame(process_manager, frame_number)
     
     def _is_in_handover(self, person: 'Person') -> bool:
@@ -114,11 +113,21 @@ class SceneExporter:
                         else:
                             direction = "blue_to_green"
                         
+                        # Check if fake handover (same color)
+                        is_fake = person.is_fake_handover if hasattr(person, 'is_fake_handover') else False
+                        if is_fake:
+                            # Override direction for fake handovers
+                            if person.person_type == self.PersonType.ASSISTANT:
+                                direction = "green_to_green"
+                            else:
+                                direction = "blue_to_blue"
+                        
                         active_handovers.append({
                             "giver_id": person.id,
                             "receiver_id": person.handover_partner.id,
                             "object_id": object_id,
-                            "direction": direction
+                            "direction": direction,
+                            "is_fake": is_fake
                         })
             
             entity = {

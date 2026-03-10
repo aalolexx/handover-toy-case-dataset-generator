@@ -464,6 +464,11 @@ class ProcessManager:
                 person_pos = person_to_occlude.position
                 x = person_pos[0] - width // 2
                 y = person_pos[1] - height // 2
+
+                # Also randomly occlude other areas to not give away that a person is behind
+                if self.rng.random() < 0.5:
+                    x = self.rng.integers(0, self.config.img_size - width)
+                    y = self.rng.integers(0, self.config.img_size - height)
                 
                 occlusion_obj = OcclusionObject(
                     int(x), int(y), width, height,

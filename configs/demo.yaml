@@ -1,16 +1,17 @@
 # Scene composition
-num_doctors: 1
-num_assistants: 1
-num_active_doctors: 1
+num_doctors: 3
+num_assistants: 3
+num_active_doctors: 2
 num_active_assistants: 1
 
 # Occlusions
 occlusion_obj_appearance_prob: 0
 instrument_hidden_prob: 0
 
+total_num_frames: 200
+num_seperated_videos: 1
+
 use_grid_movement: True
 
 # Output settings
-output_dir: "toy_data_p1_a1_o0_grid"
-
-seed: -1
+output_dir: "demo"

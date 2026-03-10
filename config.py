@@ -73,6 +73,9 @@ class Config:
     occlusion_obj_max_size: float = 0.25
 
     instrument_hidden_prob: float = 0.01
+
+    enable_fake_handovers: bool = False
+    fake_handover_prob: float = 0
     
     # Output settings
     output_dir: str = "output"
