@@ -148,24 +148,12 @@ class ProcessManager:
         cell_size = self.config.cell_size
         grid_size = self.config.grid_size
         
-        zones = []
-        for edge in free_edges:
-            if edge == 'top':
-                zones.append((0, 0, 2, grid_size))
-            elif edge == 'bottom':
-                zones.append((grid_size - 2, 0, 2, grid_size))
-            elif edge == 'left':
-                zones.append((2, 0, grid_size - 4, 2))
-            elif edge == 'right':
-                zones.append((2, grid_size - 2, grid_size - 4, 2))
-        
-        if not zones:
-            zones = [
-                (0, 0, 2, 2),
-                (0, grid_size - 2, 2, 2),
-                (grid_size - 2, 0, 2, 2),
-                (grid_size - 2, grid_size - 2, 2, 2),
-            ]
+        zones = [
+            (0, 0, 6, 6),
+            (0, grid_size - 6, 6, 6),
+            (grid_size - 6, 0, 6, 6),
+            (grid_size - 6, grid_size - 6, 6, 6),
+        ]
         
         for i in range(self.config.num_scene_objects):
             zone = zones[self.rng.integers(0, len(zones))]
@@ -245,7 +233,8 @@ class ProcessManager:
         """Create instruments on the preparation table."""
         for i in range(self.config.num_instruments):
             pos = self.preparation_table.get_instrument_position(i)
-            instrument = Instrument(i, pos, self.config.instrument_size)
+            instrument = Instrument(i, pos, self.config.instrument_size, 
+                                    config=self.config, rng=self.rng)
             self.instruments.append(instrument)
     
     def _create_persons(self):
@@ -464,11 +453,6 @@ class ProcessManager:
                 person_pos = person_to_occlude.position
                 x = person_pos[0] - width // 2
                 y = person_pos[1] - height // 2
-
-                # Also randomly occlude other areas to not give away that a person is behind
-                if self.rng.random() < 0.5:
-                    x = self.rng.integers(0, self.config.img_size - width)
-                    y = self.rng.integers(0, self.config.img_size - height)
                 
                 occlusion_obj = OcclusionObject(
                     int(x), int(y), width, height,

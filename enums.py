@@ -42,16 +42,18 @@ class InstrumentState(Enum):
 
 class ActionLabel(Enum):
     """YOLO action labels."""
-    NONE = auto()
     ASSISTANT_PREPARES = 0
     DOCTOR_WORKS = 1
     PERSON_HOLDS = 2
     ASSISTANT_GIVES = 3
     ASSISTANT_RECEIVES = 4
     HANDOVER = 5  # Additional label for any handover
-    PERSON = 6  # Generic actor label
+    PERSON = 6    # Generic actor label
     DOCTOR = 7
     ASSISTANT = 8
+    FAKE_HANDOVER = 9
+    FAILED_HANDOVER = 10   # Actors approached but handover aborted
+    APPROACH_ONLY = 11     # Actors approached without instrument/intent
 
 
 # Mapping from label to string name (for YOLO classes.txt)
@@ -65,4 +67,7 @@ LABEL_NAMES = {
     ActionLabel.PERSON: "actor",
     ActionLabel.DOCTOR: "blue",
     ActionLabel.ASSISTANT: "green",
+    ActionLabel.FAKE_HANDOVER: "fake_handover",
+    ActionLabel.FAILED_HANDOVER: "failed_handover",
+    ActionLabel.APPROACH_ONLY: "approach_only",
 }

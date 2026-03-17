@@ -41,6 +41,10 @@ class AnnotationManager:
         
         # Track handover pairs to avoid duplicate handover boxes
         processed_handover_pairs = set()
+        # Track failed handover pairs
+        processed_failed_pairs = set()
+        # Track approach-only pairs
+        processed_approach_pairs = set()
         
         for person in persons:
             # Always annotate the generic person box
@@ -57,8 +61,61 @@ class AnnotationManager:
             else:
                 print("what the helly?")
 
+            # Check for failed handover (actors approached but aborted)
+            if getattr(person, 'is_failed_handover', False):
+                partner = getattr(person, 'failed_handover_partner', None)
+                if partner:
+                    pair_id = tuple(sorted([person.id, partner.id]))
+                    
+                    if pair_id not in processed_failed_pairs:
+                        processed_failed_pairs.add(pair_id)
+                        
+                        # Create combined bounding box for failed handover
+                        combined_bbox = get_combined_bounding_box(
+                            [person.position, partner.position],
+                            person.radius,
+                            padding=0
+                        )
+                        normalized_bbox = normalize_bbox(combined_bbox, self.img_size)
+                        
+                        # Add failed handover annotation
+                        failed_line = self._format_annotation(
+                            ActionLabel.FAILED_HANDOVER.value, normalized_bbox)
+                        annotations.append(failed_line)
+            
+            # Check for approach-only event (actors reached each other without instrument)
+            if getattr(person, 'is_approach_only_event', False):
+                partner = getattr(person, 'approach_only_partner', None)
+                if partner:
+                    pair_id = tuple(sorted([person.id, partner.id]))
+                    
+                    if pair_id not in processed_approach_pairs:
+                        processed_approach_pairs.add(pair_id)
+                        
+                        # Create combined bounding box for approach
+                        combined_bbox = get_combined_bounding_box(
+                            [person.position, partner.position],
+                            person.radius,
+                            padding=0
+                        )
+                        normalized_bbox = normalize_bbox(combined_bbox, self.img_size)
+                        
+                        # Add approach-only annotation
+                        approach_line = self._format_annotation(
+                            ActionLabel.APPROACH_ONLY.value, normalized_bbox)
+                        annotations.append(approach_line)
+
             # Action specific annotations
             action = person.get_current_action()
+            
+            # Check actor_holds for working doctor and anyone in handover
+            # Must be checked BEFORE "action is None" skip, since RECEIVING state has no action but may hold instrument
+            if action == ActionLabel.DOCTOR_WORKS or person.is_in_handover():
+                if person.held_instrument is not None:
+                    bbox = person.get_bounding_box(self.img_size)
+                    line = self._format_annotation(ActionLabel.PERSON_HOLDS.value, bbox)
+                    annotations.append(line)
+            
             if action is None:
                 continue
             
@@ -78,9 +135,14 @@ class AnnotationManager:
                     normalized_bbox = normalize_bbox(combined_bbox, self.img_size)
                     
                     # Add handover annotation
-                    handover_line = self._format_annotation(
-                        ActionLabel.HANDOVER.value, normalized_bbox)
-                    annotations.append(handover_line)
+                    if not person.is_fake_handover:
+                        handover_line = self._format_annotation(
+                            ActionLabel.HANDOVER.value, normalized_bbox)
+                        annotations.append(handover_line)
+                    else:
+                        handover_line = self._format_annotation(
+                            ActionLabel.FAKE_HANDOVER.value, normalized_bbox)
+                        annotations.append(handover_line)
 
                     # Add the direction specific handover annotation too
                     line = self._format_annotation(action.value, normalized_bbox)
@@ -91,13 +153,6 @@ class AnnotationManager:
                 # Add the action annotation
                 line = self._format_annotation(action.value, bbox)
                 annotations.append(line)
-
-            # add holds box also to working doctor and handover
-            if action == ActionLabel.DOCTOR_WORKS or person.is_in_handover():
-                if person.held_instrument is not None:
-                    bbox = person.get_bounding_box(self.img_size)
-                    line = self._format_annotation(ActionLabel.PERSON_HOLDS.value, bbox)
-                    annotations.append(line)
 
         return annotations
     
@@ -139,11 +194,16 @@ class AnnotationManager:
                 f.write('\n')
     
     def save_classes_file(self):
-        """Save the classes.txt file with class names."""
+        """Save the classes.txt file with class names in correct order."""
         filepath = os.path.join(self.output_dir, 'classes.txt')
         
         with open(filepath, 'w') as f:
-            for label in ActionLabel:
+            # Sort by value to ensure correct YOLO class order (line N = class N)
+            sorted_labels = sorted(
+                [label for label in ActionLabel if label in LABEL_NAMES],
+                key=lambda x: x.value
+            )
+            for label in sorted_labels:
                 f.write(f"{LABEL_NAMES[label]}\n")
     
     def save_data_yaml(self, train_ratio: float = 0.8):
@@ -155,16 +215,33 @@ class AnnotationManager:
         """
         filepath = os.path.join(self.output_dir, 'data.yaml')
         
+        # Sort labels by value for correct order
+        sorted_labels = sorted(
+            [label for label in ActionLabel if label in LABEL_NAMES],
+            key=lambda x: x.value
+        )
+        
         content = f"""# Surgery Dataset for Action Detection
 path: {os.path.abspath(self.output_dir)}
 train: images/train
 val: images/val
 
-nc: {len(ActionLabel)}
+nc: {len(sorted_labels)}
 names:
 """
-        for label in ActionLabel:
+        for label in sorted_labels:
             content += f"  {label.value}: {LABEL_NAMES[label]}\n"
         
         with open(filepath, 'w') as f:
             f.write(content)
+    
+    def clear_frame_flags(self, persons: List[Person]):
+        """
+        Clear per-frame event flags. Call this AFTER annotation has been generated 
+        to reset flags for the next frame.
+        """
+        for person in persons:
+            if hasattr(person, 'is_failed_handover'):
+                person.is_failed_handover = False
+            if hasattr(person, 'failed_handover_partner'):
+                person.failed_handover_partner = None

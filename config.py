@@ -18,7 +18,7 @@ class Config:
     
     # Generation parameters
     total_num_frames: int = 20000
-    num_seperated_videos: int = 40 
+    num_seperated_videos: int = 40
     seed: int = 22
     
     # Image settings
@@ -40,6 +40,16 @@ class Config:
     occlusion_object_color: Tuple[int, int, int] = (0, 0, 0) 
     background_color: Tuple[int, int, int] = (242, 238, 230)
     handover_highlight_color: Tuple[int, int, int] = (255, 59, 101)
+
+    # Randomized instrument appearance
+    randomize_instruments: bool = False
+    instrument_colors: Tuple[Tuple[int, int, int], ...] = (
+        (124, 59, 255),
+        (255, 59, 101),
+        (255, 147, 59),
+        (204, 204, 219)
+    )
+    instrument_shapes: Tuple[str, ...] = ("triangle", "square", "circle")
     
     # Scene objects
     num_scene_objects: int = 0
@@ -76,6 +86,9 @@ class Config:
 
     enable_fake_handovers: bool = False
     fake_handover_prob: float = 0
+
+    handover_success_rate: float = 1.0  # Probability handover succeeds (1.0 = always)
+    approach_without_ho_rate: float = 0.0  # Probability of approach without instrument
     
     # Output settings
     output_dir: str = "output"

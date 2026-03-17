@@ -27,6 +27,12 @@ class SceneExporter:
         self.AssistantState = AssistantState
         self.DoctorState = DoctorState
         
+        # Event counters for statistics
+        self.total_handovers = 0
+        self.total_fake_handovers = 0
+        self.total_failed_handovers = 0
+        self.total_approach_only = 0
+        
     def setup_directories(self):
         """Create output directories if they don't exist."""
         os.makedirs(self.json_dir, exist_ok=True)
@@ -59,7 +65,11 @@ class SceneExporter:
         """
         entities = []
         active_handovers = []
+        failed_handovers = []
+        approach_only_events = []
         seen_handovers = set()  # To avoid duplicates
+        seen_failed = set()
+        seen_approach = set()
         
         for person in pm.persons:
             role = self._get_role(person)
@@ -129,6 +139,45 @@ class SceneExporter:
                             "direction": direction,
                             "is_fake": is_fake
                         })
+                        
+                        # Increment counters
+                        if is_fake:
+                            self.total_fake_handovers += 1
+                        else:
+                            self.total_handovers += 1
+            
+            # Check for failed handover event
+            is_failed = getattr(person, 'is_failed_handover', False)
+            if is_failed:
+                partner = getattr(person, 'failed_handover_partner', None)
+                if partner:
+                    # Create unique key to avoid duplicates
+                    fail_key = tuple(sorted([person.id, partner.id]))
+                    if fail_key not in seen_failed:
+                        seen_failed.add(fail_key)
+                        object_id = None
+                        if person.held_instrument:
+                            object_id = person.held_instrument.id
+                        failed_handovers.append({
+                            "actor1_id": fail_key[0],
+                            "actor2_id": fail_key[1],
+                            "object_id": object_id
+                        })
+                        self.total_failed_handovers += 1
+            
+            # Check for approach-only event (actors reached each other)
+            is_approach_event = getattr(person, 'is_approach_only_event', False)
+            if is_approach_event:
+                partner = getattr(person, 'approach_only_partner', None)
+                if partner:
+                    approach_key = tuple(sorted([person.id, partner.id]))
+                    if approach_key not in seen_approach:
+                        seen_approach.add(approach_key)
+                        approach_only_events.append({
+                            "approacher_id": person.id,
+                            "target_id": partner.id
+                        })
+                        self.total_approach_only += 1
             
             entity = {
                 "id": person.id,
@@ -139,7 +188,9 @@ class SceneExporter:
                 "is_holding": is_holding,
                 "held_object_id": held_object_id,
                 "is_in_handover": is_in_handover,
-                "handover_partner_id": handover_partner_id
+                "handover_partner_id": handover_partner_id,
+                "is_failed_handover": is_failed,
+                "is_approach_only": is_approach_event
             }
             entities.append(entity)
         
@@ -148,7 +199,9 @@ class SceneExporter:
             "grid_mode": self.config.use_grid_movement,
             "grid_size": self.config.grid_size if self.config.use_grid_movement else None,
             "entities": entities,
-            "active_handovers": active_handovers
+            "active_handovers": active_handovers,
+            "failed_handovers": failed_handovers,
+            "approach_only_events": approach_only_events
         }
         
         # Write JSON file
@@ -285,7 +338,17 @@ class SceneExporter:
                 "grid_mode": self.config.use_grid_movement,
                 "grid_size": self.config.grid_size if self.config.use_grid_movement else None,
                 "image_size": self.config.img_size,
-                "seed": self.config.seed
+                "seed": self.config.seed,
+                "handover_success_rate": self.config.handover_success_rate,
+                "approach_without_ho_rate": self.config.approach_without_ho_rate,
+                "enable_fake_handovers": self.config.enable_fake_handovers,
+                "fake_handover_prob": self.config.fake_handover_prob if self.config.enable_fake_handovers else None
+            },
+            "statistics": {
+                "total_handovers": self.total_handovers,
+                "total_fake_handovers": self.total_fake_handovers,
+                "total_failed_handovers": self.total_failed_handovers,
+                "total_approach_only": self.total_approach_only
             },
             "handover_events": handover_events or []
         }
@@ -293,6 +356,17 @@ class SceneExporter:
         summary_path = os.path.join(self.output_dir, "sequence_summary.json")
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=2)
+    
+    def clear_frame_flags(self, pm: 'ProcessManager'):
+        """
+        Clear per-frame event flags. Call this AFTER both annotation and export 
+        have processed the frame to reset flags for the next frame.
+        """
+        for person in pm.persons:
+            if hasattr(person, 'is_failed_handover'):
+                person.is_failed_handover = False
+            if hasattr(person, 'failed_handover_partner'):
+                person.failed_handover_partner = None
 
 
 def create_exporter(config: 'Config', output_dir: str) -> SceneExporter:

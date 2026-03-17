@@ -102,16 +102,31 @@ class RenderManager:
                           cx + highlight_r, cy + highlight_r],
                          outline=self.config.handover_highlight_color, width=3)
     
+    
     def _draw_instrument(self, draw: ImageDraw.ImageDraw, instrument: Instrument):
-        """Draw an instrument (triangle)."""
+        """Draw an instrument (triangle, square, or circle)."""
         if instrument.opacity == 0:
             return
         
-        points = instrument.get_triangle_points()
-        # Convert to format expected by PIL
-        flat_points = [(int(p[0]), int(p[1])) for p in points]
-        draw.polygon(flat_points, fill=self.config.instrument_color,
-                     outline=darken(self.config.instrument_color), width=2)
+        # Get color from instrument (may be randomized or default)
+        color = instrument.get_color()
+        outline_color = darken(color)
+        
+        if instrument.shape == Instrument.SHAPE_TRIANGLE:
+            points = instrument.get_triangle_points()
+            flat_points = [(int(p[0]), int(p[1])) for p in points]
+            draw.polygon(flat_points, fill=color, outline=outline_color, width=2)
+            
+        elif instrument.shape == Instrument.SHAPE_SQUARE:
+            points = instrument.get_square_points()
+            flat_points = [(int(p[0]), int(p[1])) for p in points]
+            draw.polygon(flat_points, fill=color, outline=outline_color, width=2)
+            
+        elif instrument.shape == Instrument.SHAPE_CIRCLE:
+            center, radius = instrument.get_circle_params()
+            cx, cy = center
+            draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                        fill=color, outline=outline_color, width=2)
     
     def save_frame(self, img: Image.Image, path: str, quality: int = 95):
         """Save a frame to disk as JPEG."""

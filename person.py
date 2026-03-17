@@ -74,6 +74,15 @@ class Person:
         # Handover coordination
         self.handover_partner: Optional['Person'] = None
         self.is_fake_handover: bool = False  # True if current handover is between same-color actors
+        self.is_approach_only: bool = False  # True if approaching without instrument (internal movement flag)
+        self.is_failed_handover: bool = False  # True if handover was aborted after approach
+        self.failed_handover_partner: Optional['Person'] = None  # Stores partner ref for annotation after abort
+        self.failed_handover_timer: int = 0  # Counts down, clears flags when reaches 0
+        
+        # Approach-only event tracking (for labeling - only active when actors reached each other)
+        self.is_approach_only_event: bool = False  # True for 2 frames when approach-only actors reach each other
+        self.approach_only_partner: Optional['Person'] = None  # Stores partner ref for annotation
+        self.approach_only_timer: int = 0  # Counts down, clears flags when reaches 0
         
         # References (set by ProcessManager)
         self.grid: Optional['GridManager'] = None
@@ -187,6 +196,20 @@ class Person:
                active_doctors: List['Person'],
                active_assistants: List['Person']):
         """Update person state and position each frame."""
+        
+        # Handle failed handover timer - auto-clear after duration expires
+        if self.failed_handover_timer > 0:
+            self.failed_handover_timer -= 1
+            if self.failed_handover_timer == 0:
+                self.is_failed_handover = False
+                self.failed_handover_partner = None
+        
+        # Handle approach-only timer - auto-clear after duration expires
+        if self.approach_only_timer > 0:
+            self.approach_only_timer -= 1
+            if self.approach_only_timer == 0:
+                self.is_approach_only_event = False
+                self.approach_only_partner = None
         
         # Handle separation first
         if self._is_separating():
@@ -611,6 +634,18 @@ class Person:
             if self.state_timer > self.rng.integers(5, 15):
                 self.state_timer = 0
                 
+                # Check for approach-without-handover (no instrument, just approach)
+                if (self.held_instrument is None and 
+                    self.config.approach_without_ho_rate > 0 and
+                    self.rng.random() < self.config.approach_without_ho_rate):
+                    doctor = self._find_available_doctor(active_doctors)
+                    if doctor:
+                        self.handover_partner = doctor
+                        self.is_approach_only = True
+                        self.state = AssistantState.MOVING_TO_DOCTOR
+                        self.move_timeout = 0
+                        return
+                
                 if self.held_instrument is None and available_instruments:
                     self._set_target_near_prep_table()
                     self.state = AssistantState.MOVING_TO_PREP_TABLE
@@ -695,10 +730,32 @@ class Person:
             
             if self.handover_partner:
                 if self._is_adjacent_to(self.handover_partner):
-                    if self.is_fake_handover:
+                    if self.is_approach_only:
+                        # Approach-only: set event flags for labeling, then separate
+                        partner = self.handover_partner
+                        
+                        # Set event flags for both actors (for annotation)
+                        self.is_approach_only_event = True
+                        partner.is_approach_only_event = True
+                        self.approach_only_partner = partner
+                        partner.approach_only_partner = self
+                        self.approach_only_timer = self.config.handover_duration
+                        partner.approach_only_timer = self.config.handover_duration
+                        
+                        # Separate and return to IDLE
+                        self._start_separation(partner)
+                        partner._start_separation(self)
+                        self.handover_partner = None
+                        self.is_approach_only = False
+                        self._reset_to_idle()
+                    elif self.is_fake_handover:
                         # Fake handover with same-color partner
                         if self._can_start_fake_handover():
-                            self._start_fake_handover(self.handover_partner)
+                            # Check success rate for fake handovers too
+                            if self.rng.random() < self.config.handover_success_rate:
+                                self._start_fake_handover(self.handover_partner)
+                            else:
+                                self._abort_handover()
                         else:
                             self.state = AssistantState.HOLDING
                             self.handover_partner = None
@@ -707,7 +764,11 @@ class Person:
                     else:
                         # Real handover with doctor
                         if self._can_start_handover():
-                            self._start_giving_handover()
+                            # Check success rate
+                            if self.rng.random() < self.config.handover_success_rate:
+                                self._start_giving_handover()
+                            else:
+                                self._abort_handover()
                         else:
                             self.state = AssistantState.HOLDING
                             self.handover_partner = None
@@ -719,6 +780,7 @@ class Person:
                 self.state = AssistantState.HOLDING
                 self.handover_partner = None
                 self.is_fake_handover = False
+                self.is_approach_only = False
                 self.state_timer = 0
         
         elif state == AssistantState.GIVING:
@@ -1018,6 +1080,53 @@ class Person:
             if self.handover_partner.state not in [DoctorState.IDLE, DoctorState.HOLDING]:
                 return False
         return True
+    
+    def _abort_handover(self):
+        """Abort handover after approach - actors separate without transferring instrument."""
+        if not self.handover_partner:
+            return
+        
+        partner = self.handover_partner
+        
+        # Mark as failed handover for labeling and store partner reference
+        # Timer will auto-clear these after handover_duration frames
+        self.is_failed_handover = True
+        partner.is_failed_handover = True
+        self.failed_handover_partner = partner
+        partner.failed_handover_partner = self
+        self.failed_handover_timer = self.config.handover_duration
+        partner.failed_handover_timer = self.config.handover_duration
+        
+        # Start separation
+        self._start_separation(partner)
+        partner._start_separation(self)
+        
+        # Return to appropriate states based on actor type
+        if self.person_type == PersonType.ASSISTANT:
+            if self.held_instrument:
+                self.state = AssistantState.HOLDING
+            else:
+                self.state = AssistantState.IDLE
+            self.state_timer = 0
+            
+            # Partner (doctor or same-color assistant)
+            if partner.person_type == PersonType.DOCTOR:
+                partner.state = DoctorState.IDLE
+            else:
+                partner.state = AssistantState.IDLE
+            partner.state_timer = 0
+        else:
+            # Doctor aborting (blue-to-blue fake handover)
+            self.state = DoctorState.HOLDING if self.held_instrument else DoctorState.IDLE
+            self.state_timer = 0
+            partner.state = DoctorState.IDLE
+            partner.state_timer = 0
+        
+        # Clear handover flags (but keep failed_handover_partner for annotation)
+        self.handover_partner = None
+        partner.handover_partner = None
+        self.is_fake_handover = False
+        partner.is_fake_handover = False
     
     def _start_giving_handover(self):
         """Start giving instrument to doctor."""

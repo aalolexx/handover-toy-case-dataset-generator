@@ -5,16 +5,12 @@ num_active_doctors: 1
 num_active_assistants: 1
 
 # Occlusions
-occlusion_obj_appearance_prob: 0
+occlusion_obj_appearance_prob: 0.3
 instrument_hidden_prob: 0
 
 use_grid_movement: True
 
-# only 50% sucess rate of handovers
-handover_success_rate: 0.25
-approach_without_ho_rate: 0.25
-
 # Output settings
-output_dir: "toy_data_p1_a1_o0_FO50_grid"
+output_dir: "toy_data_p1_a1_o30_grid"
 
 seed: -1
