@@ -16,5 +16,8 @@ fake_handover_prob: 0.5
 handover_success_rate: 0.25
 approach_without_ho_rate: 0.25
 
+# randomized instruments
+randomize_instruments: True
+
 # Output settings
-output_dir: "toy_data_p2_a1_o0_FO50_HARD_grid"
+output_dir: "toy_data_p2_a1_o0_FO75_HARD_irand_grid"
