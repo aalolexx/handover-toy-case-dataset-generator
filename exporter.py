@@ -5,6 +5,8 @@ Supports JSON scene descriptions and ASCII grid visualization.
 import json
 import os
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from ascii_generator import AsciiGenerator
+
 
 if TYPE_CHECKING:
     from process_manager import ProcessManager
@@ -26,6 +28,8 @@ class SceneExporter:
         self.PersonType = PersonType
         self.AssistantState = AssistantState
         self.DoctorState = DoctorState
+
+        self.ascii_generator = None
         
         # Event counters for statistics
         self.total_handovers = 0
@@ -35,17 +39,19 @@ class SceneExporter:
         
     def setup_directories(self):
         """Create output directories if they don't exist."""
-        os.makedirs(self.json_dir, exist_ok=True)
-        if self.config.use_grid_movement:
+        if self.config.export_json:
+            os.makedirs(self.json_dir, exist_ok=True)
+        if self.config.use_grid_movement and self.config.export_ascii:
             os.makedirs(self.ascii_dir, exist_ok=True)
     
     def export_frame(self, process_manager: 'ProcessManager', frame_number: int):
         """Export a single frame in all enabled formats."""
         # Always export JSON
-        self.export_json_frame(process_manager, frame_number)
+        if self.config.export_json:
+            self.export_json_frame(process_manager, frame_number)
         
         # Export ASCII only if grid mode is enabled
-        if self.config.use_grid_movement:
+        if self.config.use_grid_movement and self.config.export_ascii:
             self.export_ascii_frame(process_manager, frame_number)
     
     def _is_in_handover(self, person: 'Person') -> bool:
@@ -210,119 +216,18 @@ class SceneExporter:
             json.dump(frame_desc, f, indent=2)
     
     def export_ascii_frame(self, pm: 'ProcessManager', frame_number: int):
-        """
-        Export frame as ASCII grid visualization.
-        
-        Legend:
-            +  = Empty cell
-            P  = Preparation table
-            W  = Working table (patient table)
-            O  = Other scene object
-            g  = Green actor
-            G  = Green actor (in handover)
-            g¹ = Green actor (holding)
-            G¹ = Green actor (holding + handover)
-            b  = Blue actor
-            B  = Blue actor (in handover)
-            b¹ = Blue actor (holding)
-            B¹ = Blue actor (holding + handover)
-        """
+        """Export frame as ASCII grid visualization using AsciiGenerator."""
         if not self.config.use_grid_movement:
             return
         
-        grid_size = self.config.grid_size
+        if self.ascii_generator is None:
+            self.ascii_generator = AsciiGenerator(self.config)
         
-        # Initialize grid with empty cells
-        # Using 2-char width for alignment
-        grid = [["+ " for _ in range(grid_size)] for _ in range(grid_size)]
+        ascii_content = self.ascii_generator.generate_frame(pm, frame_number)
         
-        # Place preparation table cells
-        if hasattr(pm, 'grid') and pm.grid:
-            for row, col in pm.grid.prep_table_cells:
-                if 0 <= row < grid_size and 0 <= col < grid_size:
-                    grid[row][col] = "P "
-            
-            # Place patient/working table cells
-            for row, col in pm.grid.patient_table_cells:
-                if 0 <= row < grid_size and 0 <= col < grid_size:
-                    grid[row][col] = "W "
-        
-        # Place other scene objects
-        if hasattr(pm, 'scene_objects'):
-            for obj in pm.scene_objects:
-                # Get grid cell for this object's center
-                obj_x, obj_y = obj.position
-                col = int(obj_x // self.config.cell_size)
-                row = int(obj_y // self.config.cell_size)
-                if 0 <= row < grid_size and 0 <= col < grid_size:
-                    # Only place if cell is empty
-                    if grid[row][col] == "+ ":
-                        grid[row][col] = "O "
-        
-        # Place persons on grid (overwrite objects if overlapping)
-        for person in pm.persons:
-            row, col = person.grid_pos
-            
-            # Bounds check
-            if not (0 <= row < grid_size and 0 <= col < grid_size):
-                continue
-            
-            # Determine character
-            is_green = person.person_type == self.PersonType.ASSISTANT
-            is_holding = person.held_instrument is not None
-            is_handover = self._is_in_handover(person)
-            
-            # Base character: lowercase normal, uppercase in handover
-            if is_green:
-                char = "G" if is_handover else "g"
-            else:
-                char = "B" if is_handover else "b"
-            
-            # Add holding indicator (superscript 1)
-            if is_holding:
-                char = char + "¹"
-            else:
-                char = char + " "
-            
-            grid[row][col] = char
-        
-        # Build ASCII string
-        lines = []
-        
-        # Header
-        #lines.append(f"Frame: {frame_number}")
-        #lines.append("")
-        
-        # Column numbers header
-        col_header = "    " + "".join(f"{c:2d}" for c in range(grid_size))
-        lines.append(col_header)
-        lines.append("   +" + "--" * grid_size)
-        
-        # Grid rows with row numbers
-        for row_idx, row in enumerate(grid):
-            row_str = f"{row_idx:2d} |" + "".join(row)
-            lines.append(row_str)
-        
-        # Legend
-        #lines.append("")
-        #lines.append("Legend:")
-        #lines.append("  +  = Empty")
-        #lines.append("  P  = Preparation table")
-        #lines.append("  W  = Working table")
-        #lines.append("  O  = Other object")
-        #lines.append("  g  = Green")
-        #lines.append("  G  = Green (handover)")
-        #lines.append("  g¹ = Green (holding)")
-        #lines.append("  G¹ = Green (holding + handover)")
-        #lines.append("  b  = Blue")
-        #lines.append("  B  = Blue (handover)")
-        #lines.append("  b¹ = Blue (holding)")
-        #lines.append("  B¹ = Blue (holding + handover)")
-        
-        # Write to file
         ascii_path = os.path.join(self.ascii_dir, f"frame_{frame_number:06d}.txt")
         with open(ascii_path, 'w') as f:
-            f.write("\n".join(lines))
+            f.write(ascii_content)
     
     def export_sequence_summary(self, pm: 'ProcessManager', total_frames: int, 
                                  handover_events: Optional[List[Dict]] = None):
