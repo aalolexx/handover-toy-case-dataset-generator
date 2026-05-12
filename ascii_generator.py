@@ -254,6 +254,28 @@ class AsciiGenerator:
         
         return self._grid_to_string(grid)
     
+
+    def generate_frame_raw(self, pm: 'ProcessManager', frame_number: int) -> str:
+        """
+        Generate ASCII representation without headers/axis numbers.
+        Returns:
+            Pure ASCII grid as a string (no row/column headers)
+        """
+        grid = self._create_empty_grid()
+        
+        self._render_preparation_table(grid, pm)
+        self._render_patient_table(grid, pm)
+        self._render_scene_objects(grid, pm)
+        
+        for person in pm.persons:
+            self._render_actor(grid, person, frame_number)
+        
+        self._render_occlusion_rectangles(grid, pm)
+        
+        # Convert to string without headers
+        return "\n".join("".join(row) for row in grid)
+
+    
     def _grid_to_string(self, grid: List[List[str]]) -> str:
         """Convert the ASCII grid to a string with headers."""
         lines = []

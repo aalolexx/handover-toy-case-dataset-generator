@@ -92,8 +92,9 @@ class Config:
     
     # Output settings
     output_dir: str = "output"
-    export_ascii: bool = True
+    export_ascii: bool = False
     export_json: bool = True
+    export_ascii_in_json: bool = False
     
     @property
     def cell_size(self) -> int:

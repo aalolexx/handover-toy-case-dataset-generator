@@ -36,6 +36,10 @@ class SceneExporter:
         self.total_fake_handovers = 0
         self.total_failed_handovers = 0
         self.total_approach_only = 0
+
+        self.ascii_generator_for_json: Optional[AsciiGenerator] = None
+        if config.use_grid_movement:
+            self.ascii_generator_for_json = AsciiGenerator(config)
         
     def setup_directories(self):
         """Create output directories if they don't exist."""
@@ -73,7 +77,7 @@ class SceneExporter:
         active_handovers = []
         failed_handovers = []
         approach_only_events = []
-        seen_handovers = set()  # To avoid duplicates
+        seen_handovers = set()
         seen_failed = set()
         seen_approach = set()
         
@@ -87,13 +91,18 @@ class SceneExporter:
             
             # Grid position (if applicable)
             grid_position = None
-            if self.config.use_grid_movement:
+            if self.config.use_grid_movement and hasattr(person, 'grid_pos'):
                 gpos = person.grid_pos
                 grid_position = {"row": int(gpos[0]), "col": int(gpos[1])}
             
             # Holding status
             is_holding = person.held_instrument is not None
             held_object_id = person.held_instrument.id if is_holding else None
+            
+            # Check if held instrument is hidden
+            is_instrument_hidden = False
+            if is_holding and hasattr(person.held_instrument, 'is_hidden'):
+                is_instrument_hidden = person.held_instrument.is_hidden
             
             # Handover status
             is_in_handover = self._is_in_handover(person)
@@ -105,14 +114,12 @@ class SceneExporter:
                 # Record handover event (only from giver's perspective to avoid duplicates)
                 is_giver = (
                     (person.person_type == self.PersonType.ASSISTANT and 
-                     person.state == self.AssistantState.GIVING) or
+                    person.state == self.AssistantState.GIVING) or
                     (person.person_type == self.PersonType.DOCTOR and 
-                     person.state == self.DoctorState.GIVING)
+                    person.state == self.DoctorState.GIVING)
                 )
                 
                 if is_giver:
-                    # Find the object being transferred
-                    # The giver holds the object on frame 1, receiver on frame 2
                     object_id = None
                     if person.held_instrument:
                         object_id = person.held_instrument.id
@@ -123,16 +130,13 @@ class SceneExporter:
                     if handover_key not in seen_handovers and object_id is not None:
                         seen_handovers.add(handover_key)
                         
-                        # Determine direction
                         if person.person_type == self.PersonType.ASSISTANT:
                             direction = "green_to_blue"
                         else:
                             direction = "blue_to_green"
                         
-                        # Check if fake handover (same color)
-                        is_fake = person.is_fake_handover if hasattr(person, 'is_fake_handover') else False
+                        is_fake = getattr(person, 'is_fake_handover', False)
                         if is_fake:
-                            # Override direction for fake handovers
                             if person.person_type == self.PersonType.ASSISTANT:
                                 direction = "green_to_green"
                             else:
@@ -146,7 +150,6 @@ class SceneExporter:
                             "is_fake": is_fake
                         })
                         
-                        # Increment counters
                         if is_fake:
                             self.total_fake_handovers += 1
                         else:
@@ -157,7 +160,6 @@ class SceneExporter:
             if is_failed:
                 partner = getattr(person, 'failed_handover_partner', None)
                 if partner:
-                    # Create unique key to avoid duplicates
                     fail_key = tuple(sorted([person.id, partner.id]))
                     if fail_key not in seen_failed:
                         seen_failed.add(fail_key)
@@ -171,7 +173,7 @@ class SceneExporter:
                         })
                         self.total_failed_handovers += 1
             
-            # Check for approach-only event (actors reached each other)
+            # Check for approach-only event
             is_approach_event = getattr(person, 'is_approach_only_event', False)
             if is_approach_event:
                 partner = getattr(person, 'approach_only_partner', None)
@@ -193,12 +195,27 @@ class SceneExporter:
                 "grid_position": grid_position,
                 "is_holding": is_holding,
                 "held_object_id": held_object_id,
+                "is_instrument_hidden": is_instrument_hidden,
                 "is_in_handover": is_in_handover,
                 "handover_partner_id": handover_partner_id,
                 "is_failed_handover": is_failed,
                 "is_approach_only": is_approach_event
             }
             entities.append(entity)
+        
+        # Collect occlusion rectangle info
+        occlusion_rects = []
+        if hasattr(pm, 'render_manager') and hasattr(pm.render_manager, 'occlusion_objects'):
+            for occ in pm.render_manager.occlusion_objects:
+                if hasattr(occ, 'rect'):
+                    x, y, w, h = occ.rect
+                elif hasattr(occ, 'x'):
+                    x, y, w, h = occ.x, occ.y, occ.width, occ.height
+                else:
+                    continue
+                occlusion_rects.append({
+                    "x": x, "y": y, "width": w, "height": h
+                })
         
         frame_desc = {
             "frame": frame_number,
@@ -207,8 +224,16 @@ class SceneExporter:
             "entities": entities,
             "active_handovers": active_handovers,
             "failed_handovers": failed_handovers,
-            "approach_only_events": approach_only_events
+            "approach_only_events": approach_only_events,
+            "occlusion_rectangles": occlusion_rects
         }
+        
+        # Add ASCII frame if enabled
+        if self.config.use_grid_movement and self.config.export_ascii_in_json:
+            if self.ascii_generator_for_json is None:
+                self.ascii_generator_for_json = AsciiGenerator(self.config)
+            ascii_grid = self.ascii_generator_for_json.generate_frame_raw(pm, frame_number)
+            frame_desc["ascii_frame"] = ascii_grid
         
         # Write JSON file
         json_path = os.path.join(self.json_dir, f"frame_{frame_number:06d}.json")

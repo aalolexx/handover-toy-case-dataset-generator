@@ -11,7 +11,8 @@ instrument_hidden_prob: 0.1
 # Ascii export
 use_grid_movement: True
 export_ascii: True
-grid_size: 10
+export_ascii_in_json: True
+grid_size: 16
 
 enable_fake_handovers: True
 fake_handover_prob: 0.5
