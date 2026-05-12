@@ -155,6 +155,13 @@ python dataset_generator.py --create-config
 | person_avoidance_radius_multiplier | 4.0 | Start avoiding at radius × this |
 | person_separation_buffer | 2.0 | Extra space between actors |
 
+### Export Options
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| export_json | true | Export per-frame JSON scene descriptions |
+| export_ascii | true | Export ASCII grid visualization (grid mode only) |
+
 See `config.yaml` for all available options with comments.
 
 ## Output Structure
@@ -220,6 +227,7 @@ Detailed per-frame data with entity states and relationships:
       "grid_position": {"row": 6, "col": 8},
       "is_holding": true,
       "held_object_id": 3,
+      "is_instrument_hidden": false,
       "is_in_handover": true,
       "handover_partner_id": 2,
       "is_failed_handover": false,
@@ -236,47 +244,73 @@ Detailed per-frame data with entity states and relationships:
     }
   ],
   "failed_handovers": [],
-  "approach_only_events": []
+  "approach_only_events": [],
+  "occlusion_rectangles": []
 }
 ```
 
 ### ASCII Format (ascii_frames/*.txt) - Grid Mode Only
 
-Visual grid representation for debugging:
+Detailed 4×4 sub-grid representation for each cell, showing actors, objects, states, and occlusions:
 
 ```
-Legend:
-  +  = Empty cell
-  P  = Preparation area
-  W  = Working area
-  O  = Scene object
-  g  = Green actor
-  G  = Green actor (in handover)
-  g¹ = Green actor (holding)
-  G¹ = Green actor (holding + handover)
-  b  = Blue actor
-  B  = Blue actor (in handover)
-  b¹ = Blue actor (holding)
-  B¹ = Blue actor (holding + handover)
-
-Example:
-+ + + + + + + + + + + + + + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + W W W W W + + + + + +
-+ + + + + W W W W W + + + + + +
-+ + + + + W W b¹W W + + + + + +
-+ + + G¹+ W W W W W + + + + + +
-+ + + + + W W W W W + + g + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + P P P P + + + + + + +
-+ + + + + P P P P + + + + + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + + + + + + + + + + + +
-+ + + + + + + + + + + + + + + +
+     0   1   2   3   4   5   6   7   
+    +--------------------------------
+  0 |................................
+    |................................
+    |................................
+    |................................
+  1 |....WWWW........................
+    |....W..W........................
+    |....W..W........................
+    |....WWWW........................
+  2 |........bbbb....................
+    |........b^.b....................
+    |........b..b....................
+    |........bbbb....................
+  3 |....gggg........................
+    |....g+.g........................
+    |....g..g........................
+    |....gggg........................
+  4 |PPPP............................
+    |P^+P............................
+    |P*xP............................
+    |PPPP............................
+  5 |................................
+    |................................
+    |................................
+    |................................
 ```
+
+**Legend:**
+
+| Symbol | Description |
+|--------|-------------|
+| `.` | Empty space |
+| `g` | Green actor border |
+| `b` | Blue actor border |
+| `P` | Preparation area |
+| `W` | Working area |
+| `O` | Scene object |
+| `?` | Occluded area |
+| `^`, `+`, `*`, `x`, `o` | Objects (consistent per object ID) |
+
+**Cell Structure (4×4 per grid cell):**
+
+```
+gggg     <- Border (g=green, b=blue)
+g^.g     <- Inner 2×2 body with object symbol
+g..g     
+gggg     <- Border
+```
+
+**Features:**
+- Each grid cell expands to 4×4 characters for detail
+- Actors show held objects in their inner body
+- Blue actors in WORKING state animate the object rotating through inner positions
+- Occlusion rectangles render as solid `?` blocks
+- Hidden objects (via `instrument_hidden_prob`) are not rendered even when held
+- Object symbols are consistent across frames (same object = same symbol)
 
 ### Sequence Summary (sequence_summary.json)
 
@@ -298,7 +332,10 @@ Statistics and metadata for the full sequence:
     "handover_success_rate": 0.8,
     "approach_without_ho_rate": 0.1,
     "enable_fake_handovers": true,
-    "fake_handover_prob": 0.1
+    "fake_handover_prob": 0.1,
+    "randomize_instruments": false,
+    "occlusion_obj_appearance_prob": 0.0,
+    "instrument_hidden_prob": 0.0
   },
   "statistics": {
     "total_handovers": 45,
@@ -381,11 +418,13 @@ model = YOLO('yolov8n.pt')
 results = model.train(data='output/data.yaml', epochs=100)
 ```
 
-## Dataset Player
+## Dataset Players
+
+### Image Dataset Player
 
 Visualize generated datasets with optional bounding box overlay.
 
-### Command-Line Usage
+#### Command-Line Usage
 
 ```bash
 # Play dataset with bounding boxes
@@ -407,7 +446,7 @@ python dataset_player.py output/ --stats
 python dataset_player.py output/ --fps 15 --scale 1.5
 ```
 
-### Playback Controls
+#### Playback Controls
 
 | Key | Action |
 |-----|--------|
@@ -418,7 +457,7 @@ python dataset_player.py output/ --fps 15 --scale 1.5
 | +/- | Increase/Decrease speed |
 | Q/ESC | Quit |
 
-### Python API
+#### Python API
 
 ```python
 from dataset_player import DatasetPlayer
@@ -439,6 +478,61 @@ player.play_cv2(fps=30, show_boxes=True)
 
 # Export to video
 player.export_video('output.mp4', fps=30, show_boxes=True)
+```
+
+### ASCII Dataset Player
+
+Play ASCII frames directly in the terminal (grid mode only).
+
+#### Command-Line Usage
+
+```bash
+# Auto-play at 10 FPS
+python ascii_dataset_player.py output/
+
+# Interactive mode (manual frame stepping)
+python ascii_dataset_player.py output/ --interactive
+
+# Show single frame
+python ascii_dataset_player.py output/ --frame 100
+
+# Custom speed, no loop
+python ascii_dataset_player.py output/ --fps 5 --no-loop
+
+# Start from specific frame
+python ascii_dataset_player.py output/ --start 50
+```
+
+#### Interactive Controls
+
+| Key | Action |
+|-----|--------|
+| n / → | Next frame |
+| p / ← | Previous frame |
+| SPACE | Toggle auto-play |
+| +/- | Adjust speed |
+| q | Quit |
+
+#### Python API
+
+```python
+from ascii_dataset_player import AsciiDatasetPlayer
+
+# Create player
+player = AsciiDatasetPlayer('output/')
+
+# Show single frame
+player.show_frame(100)
+
+# Auto-play
+player.play(fps=10, loop=True)
+
+# Interactive mode
+player.play_interactive()
+
+# Access frames directly
+frame_content = player[50]  # Get frame 50 as string
+print(len(player))  # Number of frames
 ```
 
 ## Example Configuration
@@ -474,6 +568,10 @@ randomize_instruments: true
 handover_duration: 2
 prepare_duration_avg: 20
 work_duration_avg: 25
+
+# Export options
+export_json: true
+export_ascii: true
 ```
 
 ## Reproducibility
@@ -483,19 +581,22 @@ The dataset generation is fully deterministic when using the same seed. The comp
 ## Architecture
 
 ```
-├── config.py              # Configuration dataclass
-├── dataset_generator.py   # Main entry point
-├── process_manager.py     # Scene state management
-├── person.py              # Actor state machines
-├── instrument.py          # Objects with shape/color
-├── scene_object.py        # Areas and scene objects
-├── grid_manager.py        # Grid-based positioning
-├── pathfinding_utils.py   # A* pathfinding for grid mode
-├── render_manager.py      # PIL-based rendering
-├── annotation_manager.py  # YOLO label generation
-├── exporter.py            # JSON/ASCII export
-├── enums.py               # State and label enums
-└── utils.py               # Helper functions
+├── config.py               # Configuration dataclass
+├── dataset_generator.py    # Main entry point
+├── process_manager.py      # Scene state management
+├── person.py               # Actor state machines
+├── instrument.py           # Objects with shape/color
+├── scene_object.py         # Areas and scene objects
+├── grid_manager.py         # Grid-based positioning
+├── pathfinding_utils.py    # A* pathfinding for grid mode
+├── render_manager.py       # PIL-based rendering
+├── annotation_manager.py   # YOLO label generation
+├── exporter.py             # JSON/ASCII export
+├── ascii_generator.py      # 4×4 sub-grid ASCII rendering
+├── dataset_player.py       # Image playback with annotations
+├── ascii_dataset_player.py # Terminal-based ASCII playback
+├── enums.py                # State and label enums
+└── utils.py                # Helper functions
 ```
 
 ## License

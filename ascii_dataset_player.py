@@ -117,8 +117,7 @@ class AsciiDatasetPlayer:
             SPACE: Toggle auto-play
         """
         try:
-            import tty
-            import termios
+            
             HAS_TTY = True
         except ImportError:
             HAS_TTY = False
